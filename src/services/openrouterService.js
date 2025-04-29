@@ -1,7 +1,6 @@
 import axios from 'axios';
 import dotenv from 'dotenv';
 import { saveRecommendation, updateTikTokVideoAnalysis } from './supabaseService.js';
-import { supabase } from './supabaseService.js';
 
 dotenv.config();
 

@@ -58,22 +58,25 @@ export const generateSearchQueries = async (businessDescription) => {
     
     // Parse the JSON array from the content
     try {
+      // Try to extract JSON array using regex
+      const arrayMatch = content.match(/\[\s*"[^"]*"(?:\s*,\s*"[^"]*")*\s*\]/);
+      if (arrayMatch) {
+        return JSON.parse(arrayMatch[0]);
+      }
+      
+      // If no match found, try parsing the entire content
       const queries = JSON.parse(content);
       return queries;
     } catch (error) {
       console.error('Error parsing JSON response:', error);
       
-      // If parsing fails, try to extract queries using regex
-      const matches = content.match(/\["([^"]+)"(?:,\s*"([^"]+)")*\]/);
-      if (matches) {
-        try {
-          return JSON.parse(matches[0]);
-        } catch (e) {
-          console.error('Error parsing extracted JSON:', e);
-        }
+      // If all else fails, extract queries manually
+      const queryMatches = content.match(/"([^"]*)"/g);
+      if (queryMatches && queryMatches.length > 0) {
+        return queryMatches.map(q => q.replace(/"/g, ''));
       }
       
-      // If all else fails, return a default query
+      // Last resort: return a default query
       return [`trending ${businessDescription} tiktok`];
     }
   } catch (error) {
@@ -112,14 +115,7 @@ export const reconstructVideos = async (analyzedVideos, businessDescription, use
                 4. Hashtag strategy
                 5. Posting frequency recommendations
 
-                Format your response as a JSON object with these sections:
-                {
-                  "strategySummary": "...",
-                  "contentThemes": ["Theme 1", "Theme 2", ...],
-                  "videoIdeas": ["Idea 1", "Idea 2", ...],
-                  "hashtagStrategy": "...",
-                  "postingFrequency": "..."
-                }`
+                Format your response as a simple text without any JSON formatting.`
               }
             ]
           }
@@ -138,26 +134,45 @@ export const reconstructVideos = async (analyzedVideos, businessDescription, use
     // Extract the generated strategy from the response
     const content = response.data.choices[0].message.content;
 
-    // Parse the JSON object from the content
-    try {
-      // Try to find a JSON object in the response
-      const jsonMatch = content.match(/\{[\s\S]*\}/);
-      if (jsonMatch) {
-        strategy = JSON.parse(jsonMatch[0]);
-      } else {
-        throw new Error('No JSON object found in response');
-      }
-    } catch (error) {
-      console.error('Error parsing JSON response:', error);
-      // If parsing fails, return the raw content
-      strategy = { 
-        rawStrategy: content,
-        strategySummary: "Could not parse JSON response",
-        contentThemes: [],
-        videoIdeas: [],
-        hashtagStrategy: "",
-        postingFrequency: ""
-      };
+    // Create a structured object from the text content
+    strategy = {
+      strategySummary: content,
+      contentThemes: [],
+      videoIdeas: [],
+      hashtagStrategy: "",
+      postingFrequency: ""
+    };
+
+    // Try to extract sections from the text
+    const strategySummaryMatch = content.match(/Overall strategy summary:?([\s\S]*?)(?:Content themes|$)/i);
+    if (strategySummaryMatch && strategySummaryMatch[1]) {
+      strategy.strategySummary = strategySummaryMatch[1].trim();
+    }
+
+    const contentThemesMatch = content.match(/Content themes:?([\s\S]*?)(?:Specific video ideas|$)/i);
+    if (contentThemesMatch && contentThemesMatch[1]) {
+      strategy.contentThemes = contentThemesMatch[1]
+        .split(/\n/)
+        .map(line => line.replace(/^[-*•]\s*/, '').trim())
+        .filter(line => line.length > 0);
+    }
+
+    const videoIdeasMatch = content.match(/Specific video ideas:?([\s\S]*?)(?:Hashtag strategy|$)/i);
+    if (videoIdeasMatch && videoIdeasMatch[1]) {
+      strategy.videoIdeas = videoIdeasMatch[1]
+        .split(/\n/)
+        .map(line => line.replace(/^[-*•\d.]\s*/, '').trim())
+        .filter(line => line.length > 0);
+    }
+
+    const hashtagStrategyMatch = content.match(/Hashtag strategy:?([\s\S]*?)(?:Posting frequency|$)/i);
+    if (hashtagStrategyMatch && hashtagStrategyMatch[1]) {
+      strategy.hashtagStrategy = hashtagStrategyMatch[1].trim();
+    }
+
+    const postingFrequencyMatch = content.match(/Posting frequency:?([\s\S]*?)$/i);
+    if (postingFrequencyMatch && postingFrequencyMatch[1]) {
+      strategy.postingFrequency = postingFrequencyMatch[1].trim();
     }
 
     // Save recommendation to database if userId is provided
@@ -171,22 +186,44 @@ export const reconstructVideos = async (analyzedVideos, businessDescription, use
         // Create recommendation data
         const recommendationData = {
           userId: userId,
-          combinedSummary: typeof strategy === 'object' ? JSON.stringify(strategy) : strategy,
-          contentIdeas: typeof strategy === 'object' && strategy.videoIdeas ?
-            JSON.stringify(strategy.videoIdeas) : '[]',
+          combinedSummary: JSON.stringify(strategy),
+          contentIdeas: JSON.stringify(strategy.videoIdeas || []),
           videoIds: videoIds
         };
 
-        // Only save if userId exists in the users table
-        if (userId) {
-          try {
-            const savedRecommendation = await saveRecommendation(recommendationData);
-            console.log(`Saved recommendation to database: ${savedRecommendation.id}`);
-            strategy.recommendationId = savedRecommendation.id;
-          } catch (saveError) {
-            console.error(`Error saving recommendation to database: ${saveError.message}`);
-            // Continue even if database save fails
+        // Check if userId exists and create a temporary user if needed
+        try {
+          // First check if the user exists
+          const { data: userData, error: userError } = await supabase
+            .from('users')
+            .select('id')
+            .eq('id', userId)
+            .single();
+
+          if (userError || !userData) {
+            console.log(`User with ID ${userId} not found, creating a temporary user record`);
+            
+            // Create a temporary user if not found
+            const { data: newUser, error: createError } = await supabase
+              .from('users')
+              .insert({
+                id: userId,
+                email: `temp_${userId}@example.com`,
+                created_at: new Date().toISOString()
+              })
+              .select();
+              
+            if (createError) {
+              console.error(`Error creating temporary user: ${createError.message}`);
+            }
           }
+          
+          const savedRecommendation = await saveRecommendation(recommendationData);
+          console.log(`Saved recommendation to database: ${savedRecommendation.id}`);
+          strategy.recommendationId = savedRecommendation.id;
+        } catch (saveError) {
+          console.error(`Error saving recommendation to database: ${saveError.message}`);
+          // Continue even if database save fails
         }
       } catch (dbError) {
         console.error(`Error saving recommendation to database: ${dbError.message}`);
@@ -230,13 +267,7 @@ export const summarizeTrends = async (videoAnalyses, businessDescription, userId
                 3. Key elements that make these videos successful
                 4. Suggested hashtags to use
 
-                Format your response as a JSON object with these sections:
-                {
-                  "trendSummary": "...",
-                  "recreationSteps": ["Step 1...", "Step 2...", ...],
-                  "keyElements": ["Element 1...", "Element 2...", ...],
-                  "suggestedHashtags": ["#tag1", "#tag2", ...]
-                }`
+                Format your response as simple text with clear section headings, not as JSON.`
               }
             ]
           }
@@ -255,53 +286,101 @@ export const summarizeTrends = async (videoAnalyses, businessDescription, userId
     // Extract the generated summary from the response
     const content = response.data.choices[0].message.content;
 
-    // Parse the JSON object from the content
-    try {
-      // Try to find a JSON object in the response
-      const jsonMatch = content.match(/\{[\s\S]*\}/);
-      if (jsonMatch) {
-        const summary = JSON.parse(jsonMatch[0]);
-        
-        // Save recommendation to database if userId is provided
-        if (userId) {
-          try {
-            // Extract video IDs from analyzed videos
-            const videoIds = videoAnalyses
-              .filter(video => video.id)
-              .map(video => video.id);
+    // Create a structured object from the text content
+    const summary = {
+      trendSummary: content,
+      recreationSteps: [],
+      keyElements: [],
+      suggestedHashtags: []
+    };
 
-            // Create recommendation data
-            const recommendationData = {
-              userId: userId,
-              combinedSummary: JSON.stringify(summary),
-              contentIdeas: JSON.stringify(summary.recreationSteps || []),
-              videoIds: videoIds
-            };
-
-            const savedRecommendation = await saveRecommendation(recommendationData);
-            console.log(`Saved trend summary to database: ${savedRecommendation.id}`);
-            summary.recommendationId = savedRecommendation.id;
-          } catch (dbError) {
-            console.error(`Error saving trend summary to database: ${dbError.message}`);
-            // Continue even if database save fails
-          }
-        }
-
-        return summary;
-      } else {
-        throw new Error('No JSON object found in response');
-      }
-    } catch (error) {
-      console.error('Error parsing JSON response:', error);
-      // If parsing fails, return the raw content
-      return { 
-        rawSummary: content,
-        trendSummary: "Could not parse JSON response",
-        recreationSteps: [],
-        keyElements: [],
-        suggestedHashtags: []
-      };
+    // Try to extract sections from the text
+    const trendSummaryMatch = content.match(/Trend Summary:?([\s\S]*?)(?:Step-by-step instructions|Recreation Steps|$)/i);
+    if (trendSummaryMatch && trendSummaryMatch[1]) {
+      summary.trendSummary = trendSummaryMatch[1].trim();
     }
+
+    const recreationStepsMatch = content.match(/(?:Step-by-step instructions|Recreation Steps):?([\s\S]*?)(?:Key elements|$)/i);
+    if (recreationStepsMatch && recreationStepsMatch[1]) {
+      summary.recreationSteps = recreationStepsMatch[1]
+        .split(/\n/)
+        .map(line => line.replace(/^[-*•\d.]\s*/, '').trim())
+        .filter(line => line.length > 0);
+    }
+
+    const keyElementsMatch = content.match(/Key elements:?([\s\S]*?)(?:Suggested hashtags|$)/i);
+    if (keyElementsMatch && keyElementsMatch[1]) {
+      summary.keyElements = keyElementsMatch[1]
+        .split(/\n/)
+        .map(line => line.replace(/^[-*•]\s*/, '').trim())
+        .filter(line => line.length > 0);
+    }
+
+    const hashtagsMatch = content.match(/Suggested hashtags:?([\s\S]*?)$/i);
+    if (hashtagsMatch && hashtagsMatch[1]) {
+      summary.suggestedHashtags = hashtagsMatch[1]
+        .split(/[,\n]/)
+        .map(tag => tag.trim().replace(/^[^#]/, '#$&').trim())
+        .filter(tag => tag.length > 1);
+    }
+    
+    // Save recommendation to database if userId is provided
+    if (userId) {
+      try {
+        // Extract video IDs from analyzed videos
+        const videoIds = videoAnalyses
+          .filter(video => video.id)
+          .map(video => video.id);
+
+        // Create recommendation data
+        const recommendationData = {
+          userId: userId,
+          combinedSummary: JSON.stringify(summary),
+          contentIdeas: JSON.stringify(summary.recreationSteps || []),
+          videoIds: videoIds
+        };
+
+        // Check if userId exists and create a temporary user if needed
+        try {
+          // First check if the user exists
+          const { data: userData, error: userError } = await supabase
+            .from('users')
+            .select('id')
+            .eq('id', userId)
+            .single();
+
+          if (userError || !userData) {
+            console.log(`User with ID ${userId} not found, creating a temporary user record`);
+            
+            // Create a temporary user if not found
+            const { data: newUser, error: createError } = await supabase
+              .from('users')
+              .insert({
+                id: userId,
+                email: `temp_${userId}@example.com`,
+                created_at: new Date().toISOString()
+              })
+              .select();
+              
+            if (createError) {
+              console.error(`Error creating temporary user: ${createError.message}`);
+            }
+          }
+          
+          const savedRecommendation = await saveRecommendation(recommendationData);
+          console.log(`Saved trend summary to database: ${savedRecommendation.id}`);
+          summary.recommendationId = savedRecommendation.id;
+        } catch (saveError) {
+          console.error(`Error saving trend summary to database: ${saveError.message}`);
+          // Continue even if database save fails
+        }
+      } catch (dbError) {
+        console.error(`Error saving trend summary to database: ${dbError.message}`);
+        // Continue even if database save fails
+      }
+    }
+
+    return summary;
   } catch (error) {
     console.error('Error summarizing trends:', error);
     throw new Error('Failed to summarize trends');

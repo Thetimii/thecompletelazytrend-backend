@@ -235,12 +235,30 @@ export const saveTrendQuery = async (queryData) => {
  */
 export const updateTikTokVideoAnalysis = async (videoId, analysisData) => {
   try {
+    console.log(`Updating TikTok video analysis for video ID: ${videoId}`);
+
+    // Ensure frame_analysis is properly formatted as JSON
+    let frameAnalysis = analysisData.frameAnalysis;
+    if (typeof frameAnalysis === 'object') {
+      frameAnalysis = JSON.stringify(frameAnalysis);
+    }
+
+    // Make sure summary is a string
+    const summary = typeof analysisData.summary === 'string'
+      ? analysisData.summary
+      : (analysisData.summary ? JSON.stringify(analysisData.summary) : '');
+
+    // Make sure transcript is a string
+    const transcript = typeof analysisData.transcript === 'string'
+      ? analysisData.transcript
+      : (analysisData.transcript ? JSON.stringify(analysisData.transcript) : '');
+
     const { data, error } = await supabase
       .from('tiktok_videos')
       .update({
-        summary: analysisData.summary,
-        transcript: analysisData.transcript,
-        frame_analysis: analysisData.frameAnalysis,
+        summary: summary,
+        transcript: transcript,
+        frame_analysis: frameAnalysis,
         last_analyzed_at: new Date().toISOString()
       })
       .eq('id', videoId)
@@ -250,6 +268,7 @@ export const updateTikTokVideoAnalysis = async (videoId, analysisData) => {
       throw new Error(`Error updating TikTok video analysis: ${error.message}`);
     }
 
+    console.log(`Successfully updated TikTok video analysis for video ID: ${videoId}`);
     return data[0];
   } catch (error) {
     console.error('Error updating TikTok video analysis:', error);
@@ -264,13 +283,34 @@ export const updateTikTokVideoAnalysis = async (videoId, analysisData) => {
  */
 export const saveRecommendation = async (recommendationData) => {
   try {
+    console.log('Saving recommendation data to database');
+
+    // Ensure data is properly formatted as JSON strings
+    let combinedSummary = recommendationData.combinedSummary;
+    let contentIdeas = recommendationData.contentIdeas;
+
+    // If combinedSummary is an object, stringify it
+    if (typeof combinedSummary === 'object') {
+      combinedSummary = JSON.stringify(combinedSummary);
+    }
+
+    // If contentIdeas is an object, stringify it
+    if (typeof contentIdeas === 'object') {
+      contentIdeas = JSON.stringify(contentIdeas);
+    }
+
+    // Make sure videoIds is an array
+    const videoIds = Array.isArray(recommendationData.videoIds)
+      ? recommendationData.videoIds
+      : (recommendationData.videoIds ? [recommendationData.videoIds] : []);
+
     const { data, error } = await supabase
       .from('recommendations')
       .insert({
         user_id: recommendationData.userId,
-        combined_summary: recommendationData.combinedSummary,
-        content_ideas: recommendationData.contentIdeas,
-        video_ids: recommendationData.videoIds
+        combined_summary: combinedSummary,
+        content_ideas: contentIdeas,
+        video_ids: videoIds
       })
       .select();
 
@@ -278,6 +318,7 @@ export const saveRecommendation = async (recommendationData) => {
       throw new Error(`Error saving recommendation: ${error.message}`);
     }
 
+    console.log(`Successfully saved recommendation with ID: ${data[0].id}`);
     return data[0];
   } catch (error) {
     console.error('Error saving recommendation:', error);

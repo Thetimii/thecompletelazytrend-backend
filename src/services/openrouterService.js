@@ -1,6 +1,7 @@
 import axios from 'axios';
 import dotenv from 'dotenv';
-import { saveRecommendation } from './supabaseService.js';
+import { saveRecommendation, updateTikTokVideoAnalysis } from './supabaseService.js';
+import { supabase } from './supabaseService.js';
 
 dotenv.config();
 
@@ -15,7 +16,7 @@ const OPENROUTER_API_URL = 'https://openrouter.ai/api/v1/chat/completions';
 export const generateSearchQueries = async (businessDescription) => {
   try {
     console.log(`Generating search queries for: ${businessDescription}`);
-    
+
     const response = await axios.post(
       OPENROUTER_API_URL,
       {
@@ -26,16 +27,16 @@ export const generateSearchQueries = async (businessDescription) => {
             content: [
               {
                 type: "text",
-                text: `I need to find trending TikTok videos related to a ${businessDescription} business. 
-                
-                Generate 5 specific search queries that I can use to find relevant trending TikTok videos. 
-                
+                text: `I need to find trending TikTok videos related to a ${businessDescription} business.
+
+                Generate 5 specific search queries that I can use to find relevant trending TikTok videos.
+
                 The queries should:
                 1. Be specific enough to find relevant content
                 2. Target trending topics or hashtags
                 3. Be diverse to cover different aspects of the business
                 4. Be formatted as a simple array of strings
-                
+
                 Format your response as a JSON array of strings like this:
                 ["query 1", "query 2", "query 3", "query 4", "query 5"]`
               }
@@ -55,7 +56,7 @@ export const generateSearchQueries = async (businessDescription) => {
 
     // Extract the generated queries from the response
     const content = response.data.choices[0].message.content;
-    
+
     // Parse the JSON array from the content
     try {
       // Try to extract JSON array using regex
@@ -63,19 +64,19 @@ export const generateSearchQueries = async (businessDescription) => {
       if (arrayMatch) {
         return JSON.parse(arrayMatch[0]);
       }
-      
+
       // If no match found, try parsing the entire content
       const queries = JSON.parse(content);
       return queries;
     } catch (error) {
       console.error('Error parsing JSON response:', error);
-      
+
       // If all else fails, extract queries manually
       const queryMatches = content.match(/"([^"]*)"/g);
       if (queryMatches && queryMatches.length > 0) {
         return queryMatches.map(q => q.replace(/"/g, ''));
       }
-      
+
       // Last resort: return a default query
       return [`trending ${businessDescription} tiktok`];
     }
@@ -115,7 +116,7 @@ export const reconstructVideos = async (analyzedVideos, businessDescription, use
                 4. Hashtag strategy
                 5. Posting frequency recommendations
 
-                Format your response as a simple text without any JSON formatting.`
+                Format your response as simple text with clear section headings, not as JSON.`
               }
             ]
           }
@@ -140,7 +141,8 @@ export const reconstructVideos = async (analyzedVideos, businessDescription, use
       contentThemes: [],
       videoIdeas: [],
       hashtagStrategy: "",
-      postingFrequency: ""
+      postingFrequency: "",
+      rawContent: content // Store the raw content as well
     };
 
     // Try to extract sections from the text
@@ -191,33 +193,8 @@ export const reconstructVideos = async (analyzedVideos, businessDescription, use
           videoIds: videoIds
         };
 
-        // Check if userId exists and create a temporary user if needed
+        // Save the recommendation
         try {
-          // First check if the user exists
-          const { data: userData, error: userError } = await supabase
-            .from('users')
-            .select('id')
-            .eq('id', userId)
-            .single();
-
-          if (userError || !userData) {
-            console.log(`User with ID ${userId} not found, creating a temporary user record`);
-            
-            // Create a temporary user if not found
-            const { data: newUser, error: createError } = await supabase
-              .from('users')
-              .insert({
-                id: userId,
-                email: `temp_${userId}@example.com`,
-                created_at: new Date().toISOString()
-              })
-              .select();
-              
-            if (createError) {
-              console.error(`Error creating temporary user: ${createError.message}`);
-            }
-          }
-          
           const savedRecommendation = await saveRecommendation(recommendationData);
           console.log(`Saved recommendation to database: ${savedRecommendation.id}`);
           strategy.recommendationId = savedRecommendation.id;
@@ -248,7 +225,7 @@ export const reconstructVideos = async (analyzedVideos, businessDescription, use
 export const summarizeTrends = async (videoAnalyses, businessDescription, userId = null) => {
   try {
     console.log(`Summarizing trends for ${videoAnalyses.length} videos...`);
-    
+
     const response = await axios.post(
       OPENROUTER_API_URL,
       {
@@ -291,7 +268,8 @@ export const summarizeTrends = async (videoAnalyses, businessDescription, userId
       trendSummary: content,
       recreationSteps: [],
       keyElements: [],
-      suggestedHashtags: []
+      suggestedHashtags: [],
+      rawContent: content // Store the raw content as well
     };
 
     // Try to extract sections from the text
@@ -323,14 +301,14 @@ export const summarizeTrends = async (videoAnalyses, businessDescription, userId
         .map(tag => tag.trim().replace(/^[^#]/, '#$&').trim())
         .filter(tag => tag.length > 1);
     }
-    
+
     // Save recommendation to database if userId is provided
     if (userId) {
       try {
         // Extract video IDs from analyzed videos
         const videoIds = videoAnalyses
-          .filter(video => video.id)
-          .map(video => video.id);
+          .filter(video => video.id || video.dbId)
+          .map(video => video.id || video.dbId);
 
         // Create recommendation data
         const recommendationData = {
@@ -340,36 +318,29 @@ export const summarizeTrends = async (videoAnalyses, businessDescription, userId
           videoIds: videoIds
         };
 
-        // Check if userId exists and create a temporary user if needed
+        // Save the recommendation
         try {
-          // First check if the user exists
-          const { data: userData, error: userError } = await supabase
-            .from('users')
-            .select('id')
-            .eq('id', userId)
-            .single();
-
-          if (userError || !userData) {
-            console.log(`User with ID ${userId} not found, creating a temporary user record`);
-            
-            // Create a temporary user if not found
-            const { data: newUser, error: createError } = await supabase
-              .from('users')
-              .insert({
-                id: userId,
-                email: `temp_${userId}@example.com`,
-                created_at: new Date().toISOString()
-              })
-              .select();
-              
-            if (createError) {
-              console.error(`Error creating temporary user: ${createError.message}`);
-            }
-          }
-          
           const savedRecommendation = await saveRecommendation(recommendationData);
           console.log(`Saved trend summary to database: ${savedRecommendation.id}`);
           summary.recommendationId = savedRecommendation.id;
+
+          // Also update each video's summary field
+          for (const video of videoAnalyses) {
+            const videoId = video.id || video.dbId;
+            if (videoId) {
+              try {
+                // Update the video's summary field with the full text summary
+                await updateTikTokVideoAnalysis(videoId, {
+                  summary: summary.trendSummary || summary.rawContent,
+                  transcript: video.transcript || "",
+                  frameAnalysis: video.frameAnalysis || ""
+                });
+                console.log(`Updated TikTok video with analysis: ${videoId}`);
+              } catch (videoError) {
+                console.error(`Error updating video analysis: ${videoError.message}`);
+              }
+            }
+          }
         } catch (saveError) {
           console.error(`Error saving trend summary to database: ${saveError.message}`);
           // Continue even if database save fails

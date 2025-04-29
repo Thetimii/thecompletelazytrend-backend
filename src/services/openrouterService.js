@@ -57,6 +57,20 @@ export const generateSearchQueries = async (businessDescription) => {
     const content = response.data.choices[0].message.content;
     console.log(`Raw response from AI: ${content}`);
 
+    // Check if the AI is asking for more information instead of providing queries
+    if (content.toLowerCase().includes('please provide') ||
+        content.toLowerCase().includes('need to know') ||
+        content.toLowerCase().includes('what type')) {
+      console.log("AI is asking for more information - using default queries instead");
+      return [
+        `trending ${businessDescription} tiktok`,
+        `viral ${businessDescription} marketing`,
+        `${businessDescription} tiktok ideas`,
+        `${businessDescription} social media trends`,
+        `${businessDescription} content strategy`
+      ];
+    }
+
     // Don't try to parse as JSON at all, just extract potential queries
     try {
       // Try to extract JSON array using regex first
@@ -85,10 +99,22 @@ export const generateSearchQueries = async (businessDescription) => {
       }
 
       // Last resort: return a default query
-      return [`trending ${businessDescription} tiktok`];
+      return [
+        `trending ${businessDescription} tiktok`,
+        `viral ${businessDescription} marketing`,
+        `${businessDescription} tiktok ideas`,
+        `${businessDescription} social media trends`,
+        `${businessDescription} content strategy`
+      ];
     } catch (parseError) {
       console.error('Error parsing content:', parseError);
-      return [`trending ${businessDescription} tiktok`];
+      return [
+        `trending ${businessDescription} tiktok`,
+        `viral ${businessDescription} marketing`,
+        `${businessDescription} tiktok ideas`,
+        `${businessDescription} social media trends`,
+        `${businessDescription} content strategy`
+      ];
     }
   } catch (error) {
     console.error('Error generating search queries:', error);

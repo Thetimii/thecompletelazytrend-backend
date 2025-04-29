@@ -304,28 +304,16 @@ export const saveRecommendation = async (recommendationData) => {
       ? recommendationData.videoIds
       : (recommendationData.videoIds ? [recommendationData.videoIds] : []);
 
-    // First check if the user exists in the users table
-    let userId = recommendationData.userId;
-    if (userId) {
-      const { data: userData, error: userError } = await supabase
-        .from('users')
-        .select('id')
-        .eq('id', userId)
-        .maybeSingle();
+    // Always use the provided userId or create a default one
+    // This is necessary because the user_id column has a NOT NULL constraint
+    let userId = recommendationData.userId || '00000000-0000-0000-0000-000000000000';
+    console.log(`Using user ID ${userId} for recommendation`);
 
-      if (!userError && userData) {
-        console.log(`Found user with ID ${userId} in users table`);
-      } else {
-        console.log(`User with ID ${userId} not found in users table, will try without user_id`);
-        userId = null;
-      }
-    }
-
-    // Insert with or without user_id based on whether the user exists
+    // Insert with the user_id
     const { data, error } = await supabase
       .from('recommendations')
       .insert({
-        ...(userId ? { user_id: userId } : {}),
+        user_id: userId,
         combined_summary: combinedSummary,
         content_ideas: contentIdeas,
         video_ids: videoIds
@@ -334,12 +322,35 @@ export const saveRecommendation = async (recommendationData) => {
 
     if (error) {
       console.error(`Error saving recommendation: ${error.message}`);
-      // If there's still an error, try without a user_id as a last resort
+      // If there's still an error, try with a hardcoded user ID as a last resort
       if (error.message.includes('foreign key constraint')) {
-        console.log('Trying to save recommendation without user_id due to foreign key constraint');
+        console.log('Trying to save recommendation with hardcoded user_id due to foreign key constraint');
+
+        // First try to create a user with the hardcoded ID if it doesn't exist
+        try {
+          const { data: createUserData, error: createUserError } = await supabase
+            .from('users')
+            .insert({
+              id: '00000000-0000-0000-0000-000000000000',
+              email: 'default@example.com',
+              created_at: new Date().toISOString()
+            })
+            .select();
+
+          if (createUserError) {
+            console.log(`Error creating default user: ${createUserError.message}`);
+          } else {
+            console.log('Created default user successfully');
+          }
+        } catch (createError) {
+          console.log(`Error creating default user: ${createError.message}`);
+        }
+
+        // Now try the insert again with the hardcoded ID
         const { data: noUserData, error: noUserError } = await supabase
           .from('recommendations')
           .insert({
+            user_id: '00000000-0000-0000-0000-000000000000',
             combined_summary: combinedSummary,
             content_ideas: contentIdeas,
             video_ids: videoIds

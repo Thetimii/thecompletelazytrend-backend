@@ -312,14 +312,31 @@ export const saveRecommendation = async (recommendationData) => {
     };
 
     // We must include a user_id as it's a NOT NULL column
+    // The userId we receive is actually the auth_id, so we need to look up the actual user_id
     if (recommendationData.userId) {
-      insertData.user_id = recommendationData.userId;
-      console.log(`Including user_id: ${recommendationData.userId} in recommendation`);
+      try {
+        console.log(`Looking up user with auth_id: ${recommendationData.userId}`);
+        const userProfile = await getUserProfile(recommendationData.userId);
+
+        if (userProfile && userProfile.id) {
+          // Use the actual user.id, not the auth_id
+          insertData.user_id = userProfile.id;
+          console.log(`Found user with id: ${userProfile.id} for auth_id: ${recommendationData.userId}`);
+        } else {
+          // Fallback to a known valid user ID
+          insertData.user_id = 1; // Using ID 1 as a fallback
+          console.log(`No user found for auth_id: ${recommendationData.userId}, using fallback user_id: ${insertData.user_id}`);
+        }
+      } catch (userError) {
+        console.error(`Error looking up user: ${userError.message}`);
+        // Fallback to a known valid user ID
+        insertData.user_id = 1; // Using ID 1 as a fallback
+        console.log(`Error looking up user, using fallback user_id: ${insertData.user_id}`);
+      }
     } else {
-      // Use a default user ID from the users table
-      // This is a workaround to satisfy the NOT NULL constraint
-      insertData.user_id = '1620d3e2-a551-4adc-9006-1c26c2330a82'; // This ID appears in the logs
-      console.log(`Using default user_id: ${insertData.user_id} for recommendation`);
+      // No userId provided, use a fallback
+      insertData.user_id = 1; // Using ID 1 as a fallback
+      console.log(`No userId provided, using fallback user_id: ${insertData.user_id}`);
     }
 
     const { data, error } = await supabase

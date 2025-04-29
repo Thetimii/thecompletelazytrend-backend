@@ -8,26 +8,36 @@ const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
 const OPENROUTER_API_URL = 'https://openrouter.ai/api/v1/chat/completions';
 
 /**
- * Generate search queries for TikTok based on business description
+ * Generate search queries for TikTok videos
  * @param {string} businessDescription - Description of the business
- * @returns {Promise<string[]>} - Array of search queries
+ * @returns {Promise<Array>} - Array of search queries
  */
 export const generateSearchQueries = async (businessDescription) => {
   try {
-    console.log(`Generating search queries for business: ${businessDescription}`);
-
-    // Make the API call to OpenRouter using the Gemma model
+    console.log(`Generating search queries for: ${businessDescription}`);
+    
     const response = await axios.post(
       OPENROUTER_API_URL,
       {
-        model: "google/gemma-3-27b-it:free", // Using the requested Gemma model
+        model: 'google/gemma-3-1b-it:free',
         messages: [
           {
-            role: "user",
+            role: 'user',
             content: [
               {
                 type: "text",
-                text: `Generate 1 specific trending TikTok search queries for a ${businessDescription} business. These should be queries that would return viral or trending content dont be broad be very specific and use the most up to date trends. 1 or max two words. Return ONLY the search queries as a JSON array of strings, nothing else.`
+                text: `I need to find trending TikTok videos related to a ${businessDescription} business. 
+                
+                Generate 5 specific search queries that I can use to find relevant trending TikTok videos. 
+                
+                The queries should:
+                1. Be specific enough to find relevant content
+                2. Target trending topics or hashtags
+                3. Be diverse to cover different aspects of the business
+                4. Be formatted as a simple array of strings
+                
+                Format your response as a JSON array of strings like this:
+                ["query 1", "query 2", "query 3", "query 4", "query 5"]`
               }
             ]
           }
@@ -43,74 +53,41 @@ export const generateSearchQueries = async (businessDescription) => {
       }
     );
 
-    console.log('OpenRouter response:', response.data);
-
     // Extract the generated queries from the response
     const content = response.data.choices[0].message.content;
-    console.log('Raw content from model:', content);
-
+    
     // Parse the JSON array from the content
     try {
-      // First, try direct JSON parsing
-      return JSON.parse(content);
+      const queries = JSON.parse(content);
+      return queries;
     } catch (error) {
-      console.log('Error parsing JSON, trying alternative methods');
-
-      // If parsing fails, try to extract array using regex
-      // This pattern looks for anything that looks like a JSON array
-      const match = content.match(/\[\s*(['"].*?['"](\s*,\s*['"].*?['"])*)\s*\]/s);
-      if (match) {
-        console.log('Found array using regex:', match[0]);
+      console.error('Error parsing JSON response:', error);
+      
+      // If parsing fails, try to extract queries using regex
+      const matches = content.match(/\["([^"]+)"(?:,\s*"([^"]+)")*\]/);
+      if (matches) {
         try {
-          return JSON.parse(match[0]);
-        } catch (regexError) {
-          console.log('Error parsing regex match:', regexError);
+          return JSON.parse(matches[0]);
+        } catch (e) {
+          console.error('Error parsing extracted JSON:', e);
         }
       }
-
-      // Try another approach - look for quoted strings that might be queries
-      const stringMatches = content.match(/["']([^"']+)["']/g);
-      if (stringMatches && stringMatches.length > 0) {
-        console.log('Found quoted strings:', stringMatches);
-        // Clean up the strings and return them
-        const cleanedStrings = stringMatches
-          .map(str => str.replace(/^["']|["']$/g, '').trim())
-          .filter(str => str.length > 0);
-
-        console.log('Cleaned strings:', cleanedStrings);
-        return cleanedStrings.slice(0, 5); // Ensure we return at most 5 queries
-      }
-
-      // If all else fails, split by newlines and clean up
-      console.log('Falling back to line-by-line parsing');
-      const lines = content.split('\n')
-        .filter(line => line.trim().length > 0)
-        .map(line => line.replace(/^["'\d\.\s-]*|["'\s]*$/g, '').trim())
-        .filter(line => !line.startsWith('```') && !line.endsWith('```') && line.length > 0);
-
-      console.log('Parsed lines:', lines);
-      return lines.slice(0, 5); // Ensure we return at most 5 queries
+      
+      // If all else fails, return a default query
+      return [`trending ${businessDescription} tiktok`];
     }
   } catch (error) {
     console.error('Error generating search queries:', error);
-
-    // If there's a response error, log it for debugging
-    if (error.response) {
-      console.error('Response status:', error.response.status);
-      console.error('Response data:', error.response.data);
-    }
-
-    // No fallback data - throw the error to be handled by the caller
-    throw new Error('Failed to generate search queries. Please check your API key and try again.');
+    throw new Error('Failed to generate search queries');
   }
 };
 
 /**
- * Reconstruct and summarize TikTok marketing strategies
- * @param {Object[]} analyzedVideos - Array of analyzed video data
+ * Reconstruct videos into a marketing strategy
+ * @param {Object[]} analyzedVideos - Array of analyzed videos
  * @param {string} businessDescription - Description of the business
  * @param {string} userId - User ID to associate recommendation with
- * @returns {Promise<Object>} - Reconstructed marketing strategy
+ * @returns {Promise<Object>} - Marketing strategy
  */
 export const reconstructVideos = async (analyzedVideos, businessDescription, userId = null) => {
   try {
@@ -135,7 +112,14 @@ export const reconstructVideos = async (analyzedVideos, businessDescription, use
                 4. Hashtag strategy
                 5. Posting frequency recommendations
 
-                Return the response as a structured JSON object with these sections.`
+                Format your response as a JSON object with these sections:
+                {
+                  "strategySummary": "...",
+                  "contentThemes": ["Theme 1", "Theme 2", ...],
+                  "videoIdeas": ["Idea 1", "Idea 2", ...],
+                  "hashtagStrategy": "...",
+                  "postingFrequency": "..."
+                }`
               }
             ]
           }
@@ -156,11 +140,24 @@ export const reconstructVideos = async (analyzedVideos, businessDescription, use
 
     // Parse the JSON object from the content
     try {
-      strategy = JSON.parse(content);
+      // Try to find a JSON object in the response
+      const jsonMatch = content.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        strategy = JSON.parse(jsonMatch[0]);
+      } else {
+        throw new Error('No JSON object found in response');
+      }
     } catch (error) {
       console.error('Error parsing JSON response:', error);
       // If parsing fails, return the raw content
-      strategy = { rawStrategy: content };
+      strategy = { 
+        rawStrategy: content,
+        strategySummary: "Could not parse JSON response",
+        contentThemes: [],
+        videoIdeas: [],
+        hashtagStrategy: "",
+        postingFrequency: ""
+      };
     }
 
     // Save recommendation to database if userId is provided
@@ -176,13 +173,21 @@ export const reconstructVideos = async (analyzedVideos, businessDescription, use
           userId: userId,
           combinedSummary: typeof strategy === 'object' ? JSON.stringify(strategy) : strategy,
           contentIdeas: typeof strategy === 'object' && strategy.videoIdeas ?
-            JSON.stringify(strategy.videoIdeas) : '',
+            JSON.stringify(strategy.videoIdeas) : '[]',
           videoIds: videoIds
         };
 
-        const savedRecommendation = await saveRecommendation(recommendationData);
-        console.log(`Saved recommendation to database: ${savedRecommendation.id}`);
-        strategy.recommendationId = savedRecommendation.id;
+        // Only save if userId exists in the users table
+        if (userId) {
+          try {
+            const savedRecommendation = await saveRecommendation(recommendationData);
+            console.log(`Saved recommendation to database: ${savedRecommendation.id}`);
+            strategy.recommendationId = savedRecommendation.id;
+          } catch (saveError) {
+            console.error(`Error saving recommendation to database: ${saveError.message}`);
+            // Continue even if database save fails
+          }
+        }
       } catch (dbError) {
         console.error(`Error saving recommendation to database: ${dbError.message}`);
         // Continue even if database save fails
@@ -206,7 +211,7 @@ export const reconstructVideos = async (analyzedVideos, businessDescription, use
 export const summarizeTrends = async (videoAnalyses, businessDescription, userId = null) => {
   try {
     console.log(`Summarizing trends for ${videoAnalyses.length} videos...`);
-
+    
     const response = await axios.post(
       OPENROUTER_API_URL,
       {
@@ -252,49 +257,50 @@ export const summarizeTrends = async (videoAnalyses, businessDescription, userId
 
     // Parse the JSON object from the content
     try {
-      const summary = JSON.parse(content);
+      // Try to find a JSON object in the response
+      const jsonMatch = content.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        const summary = JSON.parse(jsonMatch[0]);
+        
+        // Save recommendation to database if userId is provided
+        if (userId) {
+          try {
+            // Extract video IDs from analyzed videos
+            const videoIds = videoAnalyses
+              .filter(video => video.id)
+              .map(video => video.id);
 
-      // Save recommendation to database if userId is provided
-      if (userId) {
-        try {
-          // Extract video IDs from analyzed videos
-          const videoIds = videoAnalyses
-            .filter(video => video.id)
-            .map(video => video.id);
+            // Create recommendation data
+            const recommendationData = {
+              userId: userId,
+              combinedSummary: JSON.stringify(summary),
+              contentIdeas: JSON.stringify(summary.recreationSteps || []),
+              videoIds: videoIds
+            };
 
-          // Format the summary for the database
-          // Make sure all required fields are present
-          const formattedSummary = {
-            trendSummary: summary.trendSummary || summary.rawSummary || "No trend summary available",
-            recreationSteps: summary.recreationSteps || [],
-            keyElements: summary.keyElements || [],
-            suggestedHashtags: summary.suggestedHashtags || []
-          };
-
-          // Create recommendation data
-          const recommendationData = {
-            userId: userId,
-            combinedSummary: JSON.stringify(formattedSummary),
-            contentIdeas: JSON.stringify(formattedSummary.recreationSteps),
-            videoIds: videoIds
-          };
-
-          console.log('Saving recommendation to database:', recommendationData);
-
-          const savedRecommendation = await saveRecommendation(recommendationData);
-          console.log(`Saved trend summary to database: ${savedRecommendation.id}`);
-          summary.recommendationId = savedRecommendation.id;
-        } catch (dbError) {
-          console.error(`Error saving trend summary to database: ${dbError.message}`);
-          // Continue even if database save fails
+            const savedRecommendation = await saveRecommendation(recommendationData);
+            console.log(`Saved trend summary to database: ${savedRecommendation.id}`);
+            summary.recommendationId = savedRecommendation.id;
+          } catch (dbError) {
+            console.error(`Error saving trend summary to database: ${dbError.message}`);
+            // Continue even if database save fails
+          }
         }
-      }
 
-      return summary;
+        return summary;
+      } else {
+        throw new Error('No JSON object found in response');
+      }
     } catch (error) {
       console.error('Error parsing JSON response:', error);
       // If parsing fails, return the raw content
-      return { rawSummary: content };
+      return { 
+        rawSummary: content,
+        trendSummary: "Could not parse JSON response",
+        recreationSteps: [],
+        keyElements: [],
+        suggestedHashtags: []
+      };
     }
   } catch (error) {
     console.error('Error summarizing trends:', error);

@@ -55,66 +55,29 @@ export const generateSearchQueries = async (businessDescription) => {
 
     // Extract the generated queries from the response
     const content = response.data.choices[0].message.content;
-    console.log(`Raw response from AI: ${content}`);
 
-    // Check if the AI is asking for more information instead of providing queries
-    if (content.toLowerCase().includes('please provide') ||
-        content.toLowerCase().includes('need to know') ||
-        content.toLowerCase().includes('what type')) {
-      console.log("AI is asking for more information - using default queries instead");
-      return [
-        `trending ${businessDescription} tiktok`,
-        `viral ${businessDescription} marketing`,
-        `${businessDescription} tiktok ideas`,
-        `${businessDescription} social media trends`,
-        `${businessDescription} content strategy`
-      ];
-    }
-
-    // Don't try to parse as JSON at all, just extract potential queries
+    // Parse the JSON array from the content
     try {
-      // Try to extract JSON array using regex first
+      // Try to extract JSON array using regex
       const arrayMatch = content.match(/\[\s*"[^"]*"(?:\s*,\s*"[^"]*")*\s*\]/);
       if (arrayMatch) {
-        try {
-          return JSON.parse(arrayMatch[0]);
-        } catch (e) {
-          console.log("Couldn't parse matched array, falling back to manual extraction");
-        }
+        return JSON.parse(arrayMatch[0]);
       }
 
-      // Extract anything that looks like a query
+      // If no match found, try parsing the entire content
+      const queries = JSON.parse(content);
+      return queries;
+    } catch (error) {
+      console.error('Error parsing JSON response:', error);
+
+      // If all else fails, extract queries manually
       const queryMatches = content.match(/"([^"]*)"/g);
       if (queryMatches && queryMatches.length > 0) {
         return queryMatches.map(q => q.replace(/"/g, ''));
       }
 
-      // If we can't extract queries, split the content by lines and use non-empty lines
-      const lines = content.split('\n')
-        .map(line => line.trim())
-        .filter(line => line.length > 0 && !line.startsWith('{') && !line.startsWith('}') && !line.startsWith('[') && !line.startsWith(']'));
-
-      if (lines.length > 0) {
-        return lines.slice(0, 5); // Take up to 5 lines
-      }
-
       // Last resort: return a default query
-      return [
-        `trending ${businessDescription} tiktok`,
-        `viral ${businessDescription} marketing`,
-        `${businessDescription} tiktok ideas`,
-        `${businessDescription} social media trends`,
-        `${businessDescription} content strategy`
-      ];
-    } catch (parseError) {
-      console.error('Error parsing content:', parseError);
-      return [
-        `trending ${businessDescription} tiktok`,
-        `viral ${businessDescription} marketing`,
-        `${businessDescription} tiktok ideas`,
-        `${businessDescription} social media trends`,
-        `${businessDescription} content strategy`
-      ];
+      return [`trending ${businessDescription} tiktok`];
     }
   } catch (error) {
     console.error('Error generating search queries:', error);
@@ -226,7 +189,8 @@ export const reconstructVideos = async (analyzedVideos, businessDescription, use
           userId: userId,
           combinedSummary: JSON.stringify(strategy),
           contentIdeas: JSON.stringify(strategy.videoIdeas || []),
-          videoIds: videoIds
+          videoIds: videoIds,
+          rawResponse: content // Store the raw response from OpenRouter
         };
 
         // Save the recommendation
@@ -351,7 +315,8 @@ export const summarizeTrends = async (videoAnalyses, businessDescription, userId
           userId: userId,
           combinedSummary: JSON.stringify(summary),
           contentIdeas: JSON.stringify(summary.recreationSteps || []),
-          videoIds: videoIds
+          videoIds: videoIds,
+          rawResponse: content // Store the raw response from OpenRouter
         };
 
         // Save the recommendation

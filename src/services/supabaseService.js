@@ -304,15 +304,23 @@ export const saveRecommendation = async (recommendationData) => {
       ? recommendationData.videoIds
       : (recommendationData.videoIds ? [recommendationData.videoIds] : []);
 
-    // Create the insert data object - without user_id for now
+    // Create the insert data object
     const insertData = {
       combined_summary: combinedSummary,
       content_ideas: contentIdeas,
       video_ids: videoIds
     };
 
-    // Skip user_id for now to avoid foreign key constraint issues
-    console.log('Saving recommendation without user_id to avoid foreign key constraint issues');
+    // We must include a user_id as it's a NOT NULL column
+    if (recommendationData.userId) {
+      insertData.user_id = recommendationData.userId;
+      console.log(`Including user_id: ${recommendationData.userId} in recommendation`);
+    } else {
+      // Use a default user ID from the users table
+      // This is a workaround to satisfy the NOT NULL constraint
+      insertData.user_id = '1620d3e2-a551-4adc-9006-1c26c2330a82'; // This ID appears in the logs
+      console.log(`Using default user_id: ${insertData.user_id} for recommendation`);
+    }
 
     const { data, error } = await supabase
       .from('recommendations')

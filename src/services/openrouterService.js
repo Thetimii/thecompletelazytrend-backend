@@ -1,6 +1,7 @@
 import axios from 'axios';
 import dotenv from 'dotenv';
 import { saveRecommendation, updateTikTokVideoAnalysis } from './supabaseService.js';
+import { supabase } from './supabaseService.js';
 
 dotenv.config();
 
@@ -55,28 +56,39 @@ export const generateSearchQueries = async (businessDescription) => {
 
     // Extract the generated queries from the response
     const content = response.data.choices[0].message.content;
+    console.log(`Raw response from AI: ${content}`);
 
-    // Parse the JSON array from the content
+    // Don't try to parse as JSON at all, just extract potential queries
     try {
-      // Try to extract JSON array using regex
+      // Try to extract JSON array using regex first
       const arrayMatch = content.match(/\[\s*"[^"]*"(?:\s*,\s*"[^"]*")*\s*\]/);
       if (arrayMatch) {
-        return JSON.parse(arrayMatch[0]);
+        try {
+          return JSON.parse(arrayMatch[0]);
+        } catch (e) {
+          console.log("Couldn't parse matched array, falling back to manual extraction");
+        }
       }
 
-      // If no match found, try parsing the entire content
-      const queries = JSON.parse(content);
-      return queries;
-    } catch (error) {
-      console.error('Error parsing JSON response:', error);
-
-      // If all else fails, extract queries manually
+      // Extract anything that looks like a query
       const queryMatches = content.match(/"([^"]*)"/g);
       if (queryMatches && queryMatches.length > 0) {
         return queryMatches.map(q => q.replace(/"/g, ''));
       }
 
+      // If we can't extract queries, split the content by lines and use non-empty lines
+      const lines = content.split('\n')
+        .map(line => line.trim())
+        .filter(line => line.length > 0 && !line.startsWith('{') && !line.startsWith('}') && !line.startsWith('[') && !line.startsWith(']'));
+
+      if (lines.length > 0) {
+        return lines.slice(0, 5); // Take up to 5 lines
+      }
+
       // Last resort: return a default query
+      return [`trending ${businessDescription} tiktok`];
+    } catch (parseError) {
+      console.error('Error parsing content:', parseError);
       return [`trending ${businessDescription} tiktok`];
     }
   } catch (error) {

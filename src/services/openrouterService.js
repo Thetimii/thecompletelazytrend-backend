@@ -19,7 +19,7 @@ export const generateSearchQueries = async (businessDescription) => {
     const response = await axios.post(
       OPENROUTER_API_URL,
       {
-        model: 'google/gemma-3-1b-it:free',
+        model: 'mistralai/mistral-small-24b-instruct-2501:free',
         messages: [
           {
             role: 'user',
@@ -123,7 +123,7 @@ export const reconstructVideos = async (analyzedVideos, businessDescription, use
     const response = await axios.post(
       OPENROUTER_API_URL,
       {
-        model: 'google/gemma-3-1b-it:free',
+        model: 'mistralai/mistral-small-24b-instruct-2501:free',
         messages: [
           {
             role: 'user',
@@ -135,7 +135,7 @@ export const reconstructVideos = async (analyzedVideos, businessDescription, use
                 Based on this data, create a comprehensive TikTok marketing strategy for this business. Include:
                 1. Overall strategy summary
                 2. Content themes that work well
-                3. Specific video ideas (at least 5)
+                3. Specific video ideas 
                 4. Hashtag strategy
                 5. Posting frequency recommendations
 

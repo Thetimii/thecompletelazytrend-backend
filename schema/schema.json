@@ -1,0 +1,167 @@
+{
+  "tables": [
+    {
+      "name": "videos",
+      "columns": [
+        {
+          "name": "id",
+          "type": "uuid",
+          "nullable": false,
+          "default": "uuid_generate_v4()"
+        },
+        {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "nullable": false,
+          "default": "now()"
+        },
+        {
+          "name": "url",
+          "type": "text",
+          "nullable": false
+        },
+        {
+          "name": "supabase_url",
+          "type": "text",
+          "nullable": false
+        },
+        {
+          "name": "title",
+          "type": "text",
+          "nullable": true
+        },
+        {
+          "name": "description",
+          "type": "text",
+          "nullable": true
+        },
+        {
+          "name": "author",
+          "type": "text",
+          "nullable": true
+        },
+        {
+          "name": "likes",
+          "type": "integer",
+          "nullable": true
+        },
+        {
+          "name": "comments",
+          "type": "integer",
+          "nullable": true
+        },
+        {
+          "name": "shares",
+          "type": "integer",
+          "nullable": true
+        },
+        {
+          "name": "views",
+          "type": "integer",
+          "nullable": true
+        },
+        {
+          "name": "search_query",
+          "type": "text",
+          "nullable": true
+        },
+        {
+          "name": "business_id",
+          "type": "uuid",
+          "nullable": true
+        }
+      ]
+    },
+    {
+      "name": "businesses",
+      "columns": [
+        {
+          "name": "id",
+          "type": "uuid",
+          "nullable": false,
+          "default": "uuid_generate_v4()"
+        },
+        {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "nullable": false,
+          "default": "now()"
+        },
+        {
+          "name": "description",
+          "type": "text",
+          "nullable": false
+        },
+        {
+          "name": "user_id",
+          "type": "uuid",
+          "nullable": false
+        }
+      ]
+    },
+    {
+      "name": "video_analyses",
+      "columns": [
+        {
+          "name": "id",
+          "type": "uuid",
+          "nullable": false,
+          "default": "uuid_generate_v4()"
+        },
+        {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "nullable": false,
+          "default": "now()"
+        },
+        {
+          "name": "video_id",
+          "type": "uuid",
+          "nullable": false
+        },
+        {
+          "name": "analysis",
+          "type": "jsonb",
+          "nullable": false
+        },
+        {
+          "name": "business_id",
+          "type": "uuid",
+          "nullable": false
+        }
+      ]
+    },
+    {
+      "name": "marketing_strategies",
+      "columns": [
+        {
+          "name": "id",
+          "type": "uuid",
+          "nullable": false,
+          "default": "uuid_generate_v4()"
+        },
+        {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "nullable": false,
+          "default": "now()"
+        },
+        {
+          "name": "business_id",
+          "type": "uuid",
+          "nullable": false
+        },
+        {
+          "name": "strategy",
+          "type": "jsonb",
+          "nullable": false
+        },
+        {
+          "name": "videos_analyzed",
+          "type": "integer",
+          "nullable": false
+        }
+      ]
+    }
+  ]
+}

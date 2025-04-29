@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Test Streaming API</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      max-width: 800px;
+      margin: 0 auto;
+      padding: 20px;
+    }
+    #response {
+      white-space: pre-wrap;
+      border: 1px solid #ccc;
+      padding: 10px;
+      min-height: 200px;
+      max-height: 500px;
+      overflow-y: auto;
+      background-color: #f9f9f9;
+    }
+    button {
+      padding: 10px 15px;
+      background-color: #4CAF50;
+      color: white;
+      border: none;
+      cursor: pointer;
+      margin-top: 10px;
+    }
+    button:hover {
+      background-color: #45a049;
+    }
+    input, textarea {
+      width: 100%;
+      padding: 8px;
+      margin: 5px 0;
+      box-sizing: border-box;
+    }
+    .loading {
+      display: inline-block;
+      width: 20px;
+      height: 20px;
+      border: 3px solid rgba(0,0,0,.3);
+      border-radius: 50%;
+      border-top-color: #000;
+      animation: spin 1s ease-in-out infinite;
+      margin-left: 10px;
+    }
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+  </style>
+</head>
+<body>
+  <h1>Test Streaming API</h1>
+
+  <div>
+    <h2>Video Information</h2>
+    <label for="videoUrl">Video URL:</label>
+    <input type="text" id="videoUrl" value="https://cxtystgaxoeygwbvgqcg.supabase.co/storage/v1/object/public/tiktok-videos/tiktok-videos/c0a6813d-1deb-4864-8e36-6dfed4040cf1-1745770083031.mp4">
+
+    <label for="businessDescription">Business Description:</label>
+    <textarea id="businessDescription" rows="3">A restaurant specializing in healthy food options</textarea>
+  </div>
+
+  <button id="startBtn">Start Streaming Analysis</button>
+  <span id="loading" class="loading" style="display: none;"></span>
+
+  <h2>Response:</h2>
+  <div id="response"></div>
+
+  <script>
+    // Get the current host and port
+    const baseUrl = window.location.origin;
+
+    document.getElementById('startBtn').addEventListener('click', function() {
+      const videoUrl = document.getElementById('videoUrl').value;
+      const businessDescription = document.getElementById('businessDescription').value;
+      const responseDiv = document.getElementById('response');
+      const loadingIndicator = document.getElementById('loading');
+
+      // Clear previous response
+      responseDiv.textContent = '';
+
+      // Show loading indicator
+      loadingIndicator.style.display = 'inline-block';
+
+      // Disable button during request
+      this.disabled = true;
+
+      // Prepare request data
+      const requestData = {
+        video: {
+          id: 'test-video',
+          supabaseUrl: videoUrl
+        },
+        businessDescription: businessDescription
+      };
+
+      // Create EventSource for streaming
+      const eventSource = new EventSource(`${baseUrl}/api/analyze-video-streaming`);
+
+      // Handle connection open
+      eventSource.onopen = function() {
+        console.log('Connection opened');
+
+        // Send the request data
+        fetch(`${baseUrl}/api/analyze-video-streaming`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify(requestData)
+        }).catch(error => {
+          console.error('Error sending request:', error);
+          responseDiv.textContent += `\nError: ${error.message}`;
+          eventSource.close();
+          loadingIndicator.style.display = 'none';
+          document.getElementById('startBtn').disabled = false;
+        });
+      };
+
+      // Handle incoming messages
+      eventSource.onmessage = function(event) {
+        const data = JSON.parse(event.data);
+
+        if (data.chunk) {
+          // Append chunk to response
+          responseDiv.textContent += data.chunk;
+
+          // Scroll to bottom
+          responseDiv.scrollTop = responseDiv.scrollHeight;
+        } else if (data.complete) {
+          // Analysis complete
+          console.log('Analysis complete:', data.analyzedVideo);
+          eventSource.close();
+          loadingIndicator.style.display = 'none';
+          document.getElementById('startBtn').disabled = false;
+        } else if (data.error) {
+          // Error occurred
+          responseDiv.textContent += `\nError: ${data.message}`;
+          eventSource.close();
+          loadingIndicator.style.display = 'none';
+          document.getElementById('startBtn').disabled = false;
+        }
+      };
+
+      // Handle errors
+      eventSource.onerror = function(error) {
+        console.error('EventSource error:', error);
+        responseDiv.textContent += '\nConnection error. Please try again.';
+        eventSource.close();
+        loadingIndicator.style.display = 'none';
+        document.getElementById('startBtn').disabled = false;
+      };
+    });
+  </script>
+</body>
+</html>

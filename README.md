@@ -81,3 +81,4 @@ This backend is designed to be deployed on Render.com:
 - No videos are ever saved locally - all content is streamed directly to Supabase Storage
 - API keys are stored in environment variables
 - Service uses Supabase's service role key for authenticated uploads
+# thecompletelazytrend-backend

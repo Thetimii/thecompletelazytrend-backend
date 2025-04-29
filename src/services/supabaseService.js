@@ -308,8 +308,7 @@ export const saveRecommendation = async (recommendationData) => {
     const insertData = {
       combined_summary: combinedSummary,
       content_ideas: contentIdeas,
-      video_ids: videoIds,
-      raw_response: recommendationData.rawResponse || combinedSummary // Store the raw response
+      video_ids: videoIds
     };
 
     // Skip user_id for now to avoid foreign key constraint issues

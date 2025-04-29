@@ -58,24 +58,48 @@ export const generateSearchQueries = async (businessDescription) => {
 
     // Parse the JSON array from the content
     try {
+      console.log('Raw content from OpenRouter:', content);
+
       // Try to extract JSON array using regex
       const arrayMatch = content.match(/\[\s*"[^"]*"(?:\s*,\s*"[^"]*")*\s*\]/);
       if (arrayMatch) {
+        console.log('Found JSON array using regex:', arrayMatch[0]);
         return JSON.parse(arrayMatch[0]);
       }
 
       // If no match found, try parsing the entire content
-      const queries = JSON.parse(content);
-      return queries;
-    } catch (error) {
-      console.error('Error parsing JSON response:', error);
-
-      // If all else fails, extract queries manually
-      const queryMatches = content.match(/"([^"]*)"/g);
-      if (queryMatches && queryMatches.length > 0) {
-        return queryMatches.map(q => q.replace(/"/g, ''));
+      try {
+        const queries = JSON.parse(content);
+        console.log('Parsed entire content as JSON:', queries);
+        return queries;
+      } catch (parseError) {
+        console.error('Error parsing entire content as JSON:', parseError);
       }
 
+      // If JSON parsing fails, extract queries manually
+      console.log('Attempting to extract queries manually');
+      const queryMatches = content.match(/"([^"]*)"/g);
+      if (queryMatches && queryMatches.length > 0) {
+        const extractedQueries = queryMatches.map(q => q.replace(/"/g, ''));
+        console.log('Extracted queries manually:', extractedQueries);
+        return extractedQueries;
+      }
+
+      // If we can't extract quotes, try to split by lines and clean up
+      const lines = content.split('\n')
+        .map(line => line.trim())
+        .filter(line => line.length > 0 && !line.startsWith('```') && !line.startsWith('[') && !line.startsWith(']'));
+
+      if (lines.length > 0) {
+        console.log('Extracted queries by lines:', lines);
+        return lines.slice(0, 5); // Take up to 5 lines
+      }
+
+      // Last resort: return a default query
+      console.log('Using default query');
+      return [`trending ${businessDescription} tiktok`];
+    } catch (error) {
+      console.error('Error parsing JSON response:', error);
       // Last resort: return a default query
       return [`trending ${businessDescription} tiktok`];
     }
@@ -189,8 +213,7 @@ export const reconstructVideos = async (analyzedVideos, businessDescription, use
           userId: userId,
           combinedSummary: JSON.stringify(strategy),
           contentIdeas: JSON.stringify(strategy.videoIdeas || []),
-          videoIds: videoIds,
-          rawResponse: content // Store the raw response from OpenRouter
+          videoIds: videoIds
         };
 
         // Save the recommendation
@@ -315,8 +338,7 @@ export const summarizeTrends = async (videoAnalyses, businessDescription, userId
           userId: userId,
           combinedSummary: JSON.stringify(summary),
           contentIdeas: JSON.stringify(summary.recreationSteps || []),
-          videoIds: videoIds,
-          rawResponse: content // Store the raw response from OpenRouter
+          videoIds: videoIds
         };
 
         // Save the recommendation

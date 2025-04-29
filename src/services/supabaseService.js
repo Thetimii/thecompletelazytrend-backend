@@ -304,10 +304,88 @@ export const saveRecommendation = async (recommendationData) => {
       ? recommendationData.videoIds
       : (recommendationData.videoIds ? [recommendationData.videoIds] : []);
 
+    // Check if userId exists in the profiles table
+    let userId = null;
+    if (recommendationData.userId) {
+      try {
+        console.log(`Checking if user with ID ${recommendationData.userId} exists in profiles table`);
+
+        // Try to find user by id directly in profiles table
+        const { data: profileData, error: profileError } = await supabase
+          .from('profiles')
+          .select('id')
+          .eq('id', recommendationData.userId)
+          .maybeSingle();
+
+        if (!profileError && profileData) {
+          console.log(`Found profile with id ${recommendationData.userId}`);
+          userId = profileData.id;
+        } else {
+          // If not found, create a temporary profile
+          console.log(`User with ID ${recommendationData.userId} not found in profiles table. Creating temporary entry.`);
+
+          // Create a temporary profile entry
+          const tempUsername = `temp_${Date.now()}`;
+          const tempEmail = `${tempUsername}@example.com`;
+
+          const { data: newProfile, error: createError } = await supabase
+            .from('profiles')
+            .insert({
+              username: tempUsername,
+              email: tempEmail,
+              created_at: new Date().toISOString(),
+              updated_at: new Date().toISOString()
+            })
+            .select();
+
+          if (createError) {
+            console.error(`Error creating temporary profile: ${createError.message}`);
+          } else {
+            console.log(`Created temporary profile with ID: ${newProfile[0].id}`);
+            userId = newProfile[0].id;
+          }
+        }
+      } catch (userCheckError) {
+        console.error(`Error checking profile existence: ${userCheckError.message}`);
+      }
+    }
+
+    // If we still don't have a valid userId, create a default profile
+    if (!userId) {
+      try {
+        console.log('Creating a default profile for recommendation');
+        const tempUsername = `default_${Date.now()}`;
+        const tempEmail = `${tempUsername}@example.com`;
+
+        const { data: defaultProfile, error: defaultProfileError } = await supabase
+          .from('profiles')
+          .insert({
+            username: tempUsername,
+            email: tempEmail,
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString()
+          })
+          .select();
+
+        if (defaultProfileError) {
+          console.error(`Error creating default profile: ${defaultProfileError.message}`);
+        } else {
+          console.log(`Created default profile with ID: ${defaultProfile[0].id}`);
+          userId = defaultProfile[0].id;
+        }
+      } catch (defaultProfileError) {
+        console.error(`Error creating default profile: ${defaultProfileError.message}`);
+      }
+    }
+
+    // Use the resolved userId or fall back to the original if we couldn't create a profile
+    const finalUserId = userId || recommendationData.userId;
+    console.log(`Using user ID ${finalUserId} for recommendation`);
+
     const { data, error } = await supabase
       .from('recommendations')
       .insert({
-        user_id: recommendationData.userId,
+        user_id: finalUserId,
         combined_summary: combinedSummary,
         content_ideas: contentIdeas,
         video_ids: videoIds

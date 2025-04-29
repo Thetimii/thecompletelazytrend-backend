@@ -23,7 +23,9 @@ const app = express();
 const allowedOrigins = [
   'http://localhost:3001',
   'http://localhost:5173',
-  'https://thecompletelazytrend.onrender.com', // Replace with your frontend URL on render.com
+  'https://thecompletelazytrend.onrender.com',
+  'https://www.lazy-trends.com',
+  'https://lazy-trends.com',
   process.env.FRONTEND_URL // Allow frontend URL from environment variable
 ].filter(Boolean); // Remove any undefined/null values
 
@@ -32,11 +34,16 @@ const corsOptions = {
     // Allow requests with no origin (like mobile apps, curl, etc.)
     if (!origin) return callback(null, true);
 
+    // Log the origin for debugging
+    console.log('Request origin:', origin);
+
+    // In production, we want to be more strict about allowed origins
     if (allowedOrigins.indexOf(origin) !== -1 || allowedOrigins.includes('*')) {
       callback(null, true);
     } else {
       console.log('CORS blocked origin:', origin);
-      callback(null, true); // Allow all origins in development
+      // For now, allow all origins to help with debugging
+      callback(null, true);
     }
   },
   methods: 'GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS',
@@ -49,9 +56,12 @@ app.use(cors(corsOptions));
 // Add additional CORS headers for all routes
 app.use((req, res, next) => {
   const origin = req.headers.origin;
-  if (allowedOrigins.includes(origin) || allowedOrigins.includes('*')) {
-    res.header('Access-Control-Allow-Origin', origin);
-  }
+
+  // Log the origin for debugging
+  console.log('Additional CORS middleware - Request origin:', origin);
+
+  // Set CORS headers for all origins for now
+  res.header('Access-Control-Allow-Origin', origin || '*');
   res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
   res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization');
   res.header('Access-Control-Allow-Credentials', 'true');
@@ -79,21 +89,12 @@ app.use('/api/summarize-trends', summarizeTrendsRouter);
 app.use('/api/delete-videos', deleteVideosRouter);
 
 // Basic health check route
-app.get('/', (req, res) => {
+app.get('/', (_req, res) => {
   res.json({ message: 'The Complete Lazy Trend API is running' });
 });
 
 // Simple test endpoint
-app.get('/api/hello', (req, res) => {
-  console.log('GET /api/hello called');
-  res.json({
-    message: 'Hello from the backend!',
-    timestamp: new Date().toISOString()
-  });
-});
-
-// Simple test endpoint
-app.get('/api/hello', (req, res) => {
+app.get('/api/hello', (_req, res) => {
   console.log('GET /api/hello called');
   res.json({
     message: 'Hello from the backend!',
@@ -102,7 +103,7 @@ app.get('/api/hello', (req, res) => {
 });
 
 // Error handling middleware
-app.use((err, req, res, next) => {
+app.use((err, _req, res, _next) => {
   console.error(err.stack);
   res.status(500).json({
     message: 'Something went wrong!',

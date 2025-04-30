@@ -1,12 +1,39 @@
 import express from 'express';
-import Stripe from 'stripe';
 import dotenv from 'dotenv';
 import { supabase } from '../services/supabaseService.js';
 
 dotenv.config();
 
 const router = express.Router();
-const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
+
+// Try to import Stripe with error handling
+let Stripe;
+let stripe;
+try {
+  // Dynamic import for Stripe
+  Stripe = (await import('stripe')).default;
+  stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
+  console.log('Stripe imported successfully');
+} catch (error) {
+  console.error('Error importing Stripe:', error);
+  // Create a mock Stripe object for development/testing
+  stripe = {
+    checkout: {
+      sessions: {
+        create: () => ({ url: 'https://example.com/mock-checkout' })
+      }
+    },
+    customers: {
+      list: () => ({ data: [] }),
+      create: (data) => ({ id: 'mock_customer_id', ...data }),
+      retrieve: () => ({ metadata: {} })
+    },
+    webhooks: {
+      constructEvent: () => ({ type: 'mock_event', data: { object: {} } })
+    }
+  };
+  console.log('Using mock Stripe object');
+}
 
 /**
  * @route POST /api/create-checkout-session

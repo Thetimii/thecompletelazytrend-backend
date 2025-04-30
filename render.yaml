@@ -2,7 +2,7 @@ services:
   - type: web
     name: thecompletelazytrend-backend
     env: node
-    buildCommand: npm ci
+    buildCommand: npm ci && npm install stripe@18.0.0
     startCommand: node src/app.js
     envVars:
       - key: NODE_ENV

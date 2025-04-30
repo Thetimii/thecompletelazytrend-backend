@@ -131,6 +131,133 @@ router.get('/webhook-test', (req, res) => {
 });
 
 /**
+ * @route POST /api/create-portal-session
+ * @desc Create a Stripe Customer Portal session
+ * @access Public
+ */
+router.post('/create-portal-session', async (req, res) => {
+  try {
+    console.log('Create portal session request received:', req.body);
+
+    const { returnUrl } = req.body;
+
+    if (!returnUrl) {
+      return res.status(400).json({ message: 'Return URL is required' });
+    }
+
+    // Get the authenticated user from the session or token
+    // This is a simplified example - you should implement proper authentication
+    const userId = req.body.userId;
+
+    if (!userId) {
+      return res.status(401).json({ message: 'User authentication required' });
+    }
+
+    // Find the user in the database
+    const { data: user, error: userError } = await supabase
+      .from('users')
+      .select('*')
+      .eq('id', userId)
+      .single();
+
+    if (userError) {
+      // Try by auth_id
+      const { data: userByAuth, error: authError } = await supabase
+        .from('users')
+        .select('*')
+        .eq('auth_id', userId)
+        .single();
+
+      if (authError) {
+        return res.status(404).json({ message: 'User not found' });
+      }
+
+      user = userByAuth;
+    }
+
+    // Check if user has a Stripe customer ID
+    if (!user.stripe_customer_id) {
+      return res.status(400).json({ message: 'No subscription found for this user' });
+    }
+
+    // Create a customer portal session
+    const session = await stripe.billingPortal.sessions.create({
+      customer: user.stripe_customer_id,
+      return_url: returnUrl,
+    });
+
+    // Return the URL for redirection
+    res.status(200).json({ url: session.url });
+  } catch (error) {
+    console.error('Error creating portal session:', error);
+    res.status(500).json({
+      message: error.message || 'Failed to create portal session'
+    });
+  }
+});
+
+/**
+ * @route POST /api/cancel-subscription
+ * @desc Cancel a Stripe subscription
+ * @access Public
+ */
+router.post('/cancel-subscription', async (req, res) => {
+  try {
+    console.log('Cancel subscription request received:', req.body);
+
+    const { subscriptionId } = req.body;
+
+    if (!subscriptionId) {
+      return res.status(400).json({ message: 'Subscription ID is required' });
+    }
+
+    // Cancel the subscription at the end of the current period
+    const subscription = await stripe.subscriptions.update(subscriptionId, {
+      cancel_at_period_end: true,
+    });
+
+    // Get the user ID from the subscription metadata
+    const { data: user, error: userError } = await supabase
+      .from('users')
+      .select('*')
+      .eq('subscription_id', subscriptionId)
+      .single();
+
+    if (!userError && user) {
+      // Update the user's subscription status in the database
+      const { error: updateError } = await supabase
+        .from('users')
+        .update({
+          subscription_status: 'cancelled',
+          cancel_at: new Date(subscription.current_period_end * 1000).toISOString()
+        })
+        .eq('id', user.id);
+
+      if (updateError) {
+        console.error('Error updating user subscription status:', updateError);
+      }
+    }
+
+    // Return the updated subscription
+    res.status(200).json({
+      success: true,
+      message: 'Subscription canceled successfully',
+      subscription: {
+        id: subscription.id,
+        status: subscription.status,
+        cancel_at_period_end: subscription.cancel_at_period_end,
+        current_period_end: new Date(subscription.current_period_end * 1000).toISOString()
+      }
+    });
+  } catch (error) {
+    console.error('Error canceling subscription:', error);
+    res.status(500).json({
+      message: error.message || 'Failed to cancel subscription'
+    });
+  }
+});
+
+/**
  * @route POST /api/webhook
  * @desc Handle Stripe webhook events
  * @access Public
@@ -394,82 +521,93 @@ router.post('/webhook', express.raw({ type: 'application/json' }), async (req, r
           const cancelledUserId = cancelledCustomer.metadata?.userId;
           console.log('Extracted userId from customer:', cancelledUserId);
 
-          if (cancelledUserId) {
-            // First try to find user by auth_id
-            console.log('Trying to find user by auth_id:', cancelledUserId);
-            let { data: existingUser, error: userError } = await supabase
+          // First try to find user by subscription_id
+          console.log('Trying to find user by subscription_id:', cancelledSubscription.id);
+          let { data: userBySubscription, error: subscriptionError } = await supabase
+            .from('users')
+            .select('*')
+            .eq('subscription_id', cancelledSubscription.id)
+            .single();
+
+          if (subscriptionError) {
+            console.log('User not found by subscription_id, trying by customer_id');
+            // Try by customer_id
+            const { data: userByCustomer, error: customerError } = await supabase
               .from('users')
               .select('*')
-              .eq('auth_id', cancelledUserId)
+              .eq('stripe_customer_id', cancelledCustomerId)
               .single();
 
-            // If not found by auth_id, try by id
-            if (userError) {
-              console.log('User not found by auth_id, trying by id');
-              const { data: userById, error: idError } = await supabase
-                .from('users')
-                .select('*')
-                .eq('id', cancelledUserId)
-                .single();
+            if (customerError) {
+              console.log('User not found by customer_id, trying by auth_id/id');
+              // If we have a userId from metadata, try that
+              if (cancelledUserId) {
+                // First try to find user by auth_id
+                console.log('Trying to find user by auth_id:', cancelledUserId);
+                let { data: existingUser, error: userError } = await supabase
+                  .from('users')
+                  .select('*')
+                  .eq('auth_id', cancelledUserId)
+                  .single();
 
-              if (idError) {
-                console.error('Error finding user by id:', idError);
-                console.log('Will try to update anyway');
-              } else {
-                existingUser = userById;
-                console.log('Found user by id:', existingUser.email);
+                // If not found by auth_id, try by id
+                if (userError) {
+                  console.log('User not found by auth_id, trying by id');
+                  const { data: userById, error: idError } = await supabase
+                    .from('users')
+                    .select('*')
+                    .eq('id', cancelledUserId)
+                    .single();
+
+                  if (idError) {
+                    console.error('Error finding user by id:', idError);
+                    console.log('Will try to update anyway');
+                  } else {
+                    userBySubscription = userById;
+                    console.log('Found user by id:', userBySubscription.email);
+                  }
+                } else {
+                  userBySubscription = existingUser;
+                  console.log('Found user by auth_id:', userBySubscription.email);
+                }
               }
             } else {
-              console.log('Found user by auth_id:', existingUser.email);
+              userBySubscription = userByCustomer;
+              console.log('Found user by customer_id:', userBySubscription.email);
             }
+          } else {
+            console.log('Found user by subscription_id:', userBySubscription.email);
+          }
 
-            // Determine which field to use for the update
-            const updateField = existingUser ? (existingUser.auth_id ? 'auth_id' : 'id') : 'auth_id';
-            console.log(`Will update user using ${updateField} field with value:`, cancelledUserId);
-
+          if (userBySubscription) {
             // Update subscription status
             console.log('Updating user subscription status to cancelled');
             const updateData = {
-              subscription_status: 'cancelled'
+              subscription_status: 'cancelled',
+              // Set access end date to current period end if available
+              cancel_at: cancelledSubscription.current_period_end
+                ? new Date(cancelledSubscription.current_period_end * 1000).toISOString()
+                : new Date().toISOString()
             };
             console.log('Update data:', JSON.stringify(updateData, null, 2));
 
-            // Try to update by auth_id first
-            let { data, error } = await supabase
+            const { data, error } = await supabase
               .from('users')
               .update(updateData)
-              .eq('auth_id', cancelledUserId)
+              .eq('id', userBySubscription.id)
               .select();
-
-            // If that fails, try by id
-            if (error || (data && data.length === 0)) {
-              console.log('Update by auth_id failed, trying by id');
-              const { data: dataById, error: errorById } = await supabase
-                .from('users')
-                .update(updateData)
-                .eq('id', cancelledUserId)
-                .select();
-
-              if (errorById) {
-                console.error('Error updating by id:', errorById);
-                error = errorById;
-              } else {
-                data = dataById;
-                console.log('Update by id succeeded');
-              }
-            }
 
             if (error) {
               console.error('Error updating subscription status to cancelled:', error);
             } else {
               console.log('User subscription cancelled successfully:', data);
-              console.log(`User ${cancelledUserId} subscription cancelled`);
+              console.log(`User ${userBySubscription.id} subscription cancelled`);
             }
           } else {
-            console.error('No userId found in customer metadata');
+            console.error('Could not find user associated with the cancelled subscription');
           }
         } catch (customerError) {
-          console.error('Error processing customer:', customerError);
+          console.error('Error processing subscription cancellation:', customerError);
         }
         break;
 

@@ -160,35 +160,84 @@ router.post('/webhook', express.raw({ type: 'application/json' }), async (req, r
             const isInTrial = subscription.status === 'trialing';
             console.log('Subscription status:', subscription.status, 'Is in trial:', isInTrial);
 
-            // First check if user exists
-            const { data: existingUser, error: userError } = await supabase
+            // First try to find user by auth_id
+            console.log('Trying to find user by auth_id:', userId);
+            let { data: existingUser, error: userError } = await supabase
               .from('users')
               .select('*')
               .eq('auth_id', userId)
               .single();
 
+            // If not found by auth_id, try by id
             if (userError) {
-              console.error('Error finding user:', userError);
-              console.log('Will try to update anyway');
+              console.log('User not found by auth_id, trying by id');
+              const { data: userById, error: idError } = await supabase
+                .from('users')
+                .select('*')
+                .eq('id', userId)
+                .single();
+
+              if (idError) {
+                console.error('Error finding user by id:', idError);
+                console.log('Will try one more approach - listing all users');
+
+                // Last resort - list all users and log them
+                const { data: allUsers } = await supabase
+                  .from('users')
+                  .select('id, auth_id, email')
+                  .limit(10);
+
+                console.log('Available users:', JSON.stringify(allUsers, null, 2));
+                console.log('Will try to update anyway');
+              } else {
+                existingUser = userById;
+                console.log('Found user by id:', existingUser.email);
+              }
             } else {
-              console.log('Found user:', existingUser.email);
+              console.log('Found user by auth_id:', existingUser.email);
             }
+
+            // Determine which field to use for the update
+            const updateField = existingUser ? (existingUser.auth_id ? 'auth_id' : 'id') : 'auth_id';
+            console.log(`Will update user using ${updateField} field with value:`, userId);
 
             // Update user profile to mark payment as completed and onboarding as completed
             console.log('Updating user profile with payment information');
-            const { data, error } = await supabase
+            const updateData = {
+              payment_completed: true,
+              payment_date: new Date().toISOString(),
+              payment_id: session.id,
+              subscription_id: session.subscription,
+              subscription_status: isInTrial ? 'trialing' : 'active',
+              trial_end_date: isInTrial ? new Date(subscription.trial_end * 1000).toISOString() : null,
+              onboarding_completed: true
+            };
+            console.log('Update data:', JSON.stringify(updateData, null, 2));
+
+            // Try to update by auth_id first
+            let { data, error } = await supabase
               .from('users')
-              .update({
-                payment_completed: true,
-                payment_date: new Date().toISOString(),
-                payment_id: session.id,
-                subscription_id: session.subscription,
-                subscription_status: isInTrial ? 'trialing' : 'active',
-                trial_end_date: isInTrial ? new Date(subscription.trial_end * 1000).toISOString() : null,
-                onboarding_completed: true
-              })
+              .update(updateData)
               .eq('auth_id', userId)
               .select();
+
+            // If that fails, try by id
+            if (error || (data && data.length === 0)) {
+              console.log('Update by auth_id failed, trying by id');
+              const { data: dataById, error: errorById } = await supabase
+                .from('users')
+                .update(updateData)
+                .eq('id', userId)
+                .select();
+
+              if (errorById) {
+                console.error('Error updating by id:', errorById);
+                error = errorById;
+              } else {
+                data = dataById;
+                console.log('Update by id succeeded');
+              }
+            }
 
             if (error) {
               console.error('Error updating user profile:', error);
@@ -229,32 +278,72 @@ router.post('/webhook', express.raw({ type: 'application/json' }), async (req, r
                               subscription.trial_end < Math.floor(Date.now() / 1000);
             console.log('Is trial ending:', isTrialEnd);
 
-            // First check if user exists
-            const { data: existingUser, error: userError } = await supabase
+            // First try to find user by auth_id
+            console.log('Trying to find user by auth_id:', userIdFromCustomer);
+            let { data: existingUser, error: userError } = await supabase
               .from('users')
               .select('*')
               .eq('auth_id', userIdFromCustomer)
               .single();
 
+            // If not found by auth_id, try by id
             if (userError) {
-              console.error('Error finding user:', userError);
-              console.log('Will try to update anyway');
+              console.log('User not found by auth_id, trying by id');
+              const { data: userById, error: idError } = await supabase
+                .from('users')
+                .select('*')
+                .eq('id', userIdFromCustomer)
+                .single();
+
+              if (idError) {
+                console.error('Error finding user by id:', idError);
+                console.log('Will try to update anyway');
+              } else {
+                existingUser = userById;
+                console.log('Found user by id:', existingUser.email);
+              }
             } else {
-              console.log('Found user:', existingUser.email);
+              console.log('Found user by auth_id:', existingUser.email);
             }
+
+            // Determine which field to use for the update
+            const updateField = existingUser ? (existingUser.auth_id ? 'auth_id' : 'id') : 'auth_id';
+            console.log(`Will update user using ${updateField} field with value:`, userIdFromCustomer);
 
             // Update subscription status
             console.log('Updating user subscription status');
-            const { data, error } = await supabase
+            const updateData = {
+              subscription_status: subscription.status,
+              trial_end_date: subscription.trial_end ? new Date(subscription.trial_end * 1000).toISOString() : null,
+              // If trial ended and subscription is now active, update the payment date
+              payment_date: isTrialEnd ? new Date().toISOString() : undefined
+            };
+            console.log('Update data:', JSON.stringify(updateData, null, 2));
+
+            // Try to update by auth_id first
+            let { data, error } = await supabase
               .from('users')
-              .update({
-                subscription_status: subscription.status,
-                trial_end_date: subscription.trial_end ? new Date(subscription.trial_end * 1000).toISOString() : null,
-                // If trial ended and subscription is now active, update the payment date
-                payment_date: isTrialEnd ? new Date().toISOString() : undefined
-              })
+              .update(updateData)
               .eq('auth_id', userIdFromCustomer)
               .select();
+
+            // If that fails, try by id
+            if (error || (data && data.length === 0)) {
+              console.log('Update by auth_id failed, trying by id');
+              const { data: dataById, error: errorById } = await supabase
+                .from('users')
+                .update(updateData)
+                .eq('id', userIdFromCustomer)
+                .select();
+
+              if (errorById) {
+                console.error('Error updating by id:', errorById);
+                error = errorById;
+              } else {
+                data = dataById;
+                console.log('Update by id succeeded');
+              }
+            }
 
             if (error) {
               console.error('Error updating subscription status:', error);
@@ -288,29 +377,69 @@ router.post('/webhook', express.raw({ type: 'application/json' }), async (req, r
           console.log('Extracted userId from customer:', cancelledUserId);
 
           if (cancelledUserId) {
-            // First check if user exists
-            const { data: existingUser, error: userError } = await supabase
+            // First try to find user by auth_id
+            console.log('Trying to find user by auth_id:', cancelledUserId);
+            let { data: existingUser, error: userError } = await supabase
               .from('users')
               .select('*')
               .eq('auth_id', cancelledUserId)
               .single();
 
+            // If not found by auth_id, try by id
             if (userError) {
-              console.error('Error finding user:', userError);
-              console.log('Will try to update anyway');
+              console.log('User not found by auth_id, trying by id');
+              const { data: userById, error: idError } = await supabase
+                .from('users')
+                .select('*')
+                .eq('id', cancelledUserId)
+                .single();
+
+              if (idError) {
+                console.error('Error finding user by id:', idError);
+                console.log('Will try to update anyway');
+              } else {
+                existingUser = userById;
+                console.log('Found user by id:', existingUser.email);
+              }
             } else {
-              console.log('Found user:', existingUser.email);
+              console.log('Found user by auth_id:', existingUser.email);
             }
+
+            // Determine which field to use for the update
+            const updateField = existingUser ? (existingUser.auth_id ? 'auth_id' : 'id') : 'auth_id';
+            console.log(`Will update user using ${updateField} field with value:`, cancelledUserId);
 
             // Update subscription status
             console.log('Updating user subscription status to cancelled');
-            const { data, error } = await supabase
+            const updateData = {
+              subscription_status: 'cancelled'
+            };
+            console.log('Update data:', JSON.stringify(updateData, null, 2));
+
+            // Try to update by auth_id first
+            let { data, error } = await supabase
               .from('users')
-              .update({
-                subscription_status: 'cancelled'
-              })
+              .update(updateData)
               .eq('auth_id', cancelledUserId)
               .select();
+
+            // If that fails, try by id
+            if (error || (data && data.length === 0)) {
+              console.log('Update by auth_id failed, trying by id');
+              const { data: dataById, error: errorById } = await supabase
+                .from('users')
+                .update(updateData)
+                .eq('id', cancelledUserId)
+                .select();
+
+              if (errorById) {
+                console.error('Error updating by id:', errorById);
+                error = errorById;
+              } else {
+                data = dataById;
+                console.log('Update by id succeeded');
+              }
+            }
 
             if (error) {
               console.error('Error updating subscription status to cancelled:', error);

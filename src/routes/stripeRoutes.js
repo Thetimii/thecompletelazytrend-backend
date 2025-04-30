@@ -7,34 +7,12 @@ dotenv.config();
 const router = express.Router();
 const supabase = supabaseService.supabase;
 
-// Try to import Stripe with error handling
-let Stripe;
-let stripe;
-try {
-  // Dynamic import for Stripe
-  Stripe = (await import('stripe')).default;
-  stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
-  console.log('Stripe imported successfully');
-} catch (error) {
-  console.error('Error importing Stripe:', error);
-  // Create a mock Stripe object for development/testing
-  stripe = {
-    checkout: {
-      sessions: {
-        create: () => ({ url: 'https://example.com/mock-checkout' })
-      }
-    },
-    customers: {
-      list: () => ({ data: [] }),
-      create: (data) => ({ id: 'mock_customer_id', ...data }),
-      retrieve: () => ({ metadata: {} })
-    },
-    webhooks: {
-      constructEvent: () => ({ type: 'mock_event', data: { object: {} } })
-    }
-  };
-  console.log('Using mock Stripe object');
-}
+// Import Stripe directly
+import Stripe from 'stripe';
+
+// Initialize Stripe with the key from environment variables
+const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
+console.log('Stripe initialized with key from environment variables');
 
 /**
  * @route POST /api/create-checkout-session
@@ -87,13 +65,6 @@ router.post('/create-checkout-session', async (req, res) => {
       return res.status(200).json({ url: session.url });
     } catch (sessionError) {
       console.error('Error creating checkout session:', sessionError);
-
-      // If we're using the mock Stripe object, return a mock URL
-      if (typeof stripe.checkout.sessions.create === 'function' &&
-          stripe.checkout.sessions.create.toString().includes('mock')) {
-        console.log('Using mock checkout URL');
-        return res.status(200).json({ url: 'https://example.com/mock-checkout' });
-      }
 
       return res.status(500).json({
         message: 'Failed to create checkout session',

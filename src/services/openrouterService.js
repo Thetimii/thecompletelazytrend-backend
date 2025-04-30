@@ -35,6 +35,10 @@ export const generateSearchQueries = async (businessDescription) => {
                 2. Target trending topics or hashtags
                 3. Be diverse to cover different aspects of the business
                 4. Be formatted as a simple array of strings
+                5. only 1-2 words max 
+                6. use the most up to date trends
+                7. dont be broad be very specific
+                8. dont use hashtags
 
                 Format your response as a JSON array of strings like this:
                 ["query 1", "query 2", "query 3", "query 4", "query 5"]`

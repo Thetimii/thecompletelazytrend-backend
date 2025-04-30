@@ -139,52 +139,102 @@ router.post('/create-portal-session', async (req, res) => {
   try {
     console.log('Create portal session request received:', req.body);
 
-    const { returnUrl } = req.body;
+    const { returnUrl, userId } = req.body;
 
     if (!returnUrl) {
       return res.status(400).json({ message: 'Return URL is required' });
     }
 
-    // Get the authenticated user from the session or token
-    // This is a simplified example - you should implement proper authentication
-    const userId = req.body.userId;
-
     if (!userId) {
-      return res.status(401).json({ message: 'User authentication required' });
+      return res.status(401).json({ message: 'User ID is required' });
     }
 
-    // Find the user in the database
-    const { data: user, error: userError } = await supabase
+    // First try to find user by auth_id
+    console.log('Trying to find user by auth_id:', userId);
+    let { data: user, error: userError } = await supabase
       .from('users')
       .select('*')
-      .eq('id', userId)
+      .eq('auth_id', userId)
       .single();
 
+    // If not found by auth_id, try by id
     if (userError) {
-      // Try by auth_id
-      const { data: userByAuth, error: authError } = await supabase
+      console.log('User not found by auth_id, trying by id');
+      const { data: userById, error: idError } = await supabase
         .from('users')
         .select('*')
-        .eq('auth_id', userId)
+        .eq('id', userId)
         .single();
 
-      if (authError) {
+      if (idError) {
+        console.error('Error finding user:', idError);
         return res.status(404).json({ message: 'User not found' });
       }
 
-      user = userByAuth;
+      user = userById;
+      console.log('Found user by id:', user.email);
+    } else {
+      console.log('Found user by auth_id:', user.email);
     }
 
-    // Check if user has a Stripe customer ID
-    if (!user.stripe_customer_id) {
-      return res.status(400).json({ message: 'No subscription found for this user' });
+    // Get the customer ID from the checkout session
+    let customerId = user.stripe_customer_id;
+
+    // If no customer ID is stored, try to get it from the subscription
+    if (!customerId && user.subscription_id) {
+      try {
+        console.log('No customer ID found, retrieving from subscription:', user.subscription_id);
+        const subscription = await stripe.subscriptions.retrieve(user.subscription_id);
+        customerId = subscription.customer;
+
+        // Update the user record with the customer ID
+        if (customerId) {
+          console.log('Updating user with customer ID:', customerId);
+          await supabase
+            .from('users')
+            .update({ stripe_customer_id: customerId })
+            .eq('id', user.id);
+        }
+      } catch (subError) {
+        console.error('Error retrieving subscription:', subError);
+      }
     }
+
+    // If still no customer ID, try to get it from the payment method
+    if (!customerId && user.payment_id) {
+      try {
+        console.log('No customer ID found, retrieving from payment:', user.payment_id);
+        const session = await stripe.checkout.sessions.retrieve(user.payment_id);
+        customerId = session.customer;
+
+        // Update the user record with the customer ID
+        if (customerId) {
+          console.log('Updating user with customer ID:', customerId);
+          await supabase
+            .from('users')
+            .update({ stripe_customer_id: customerId })
+            .eq('id', user.id);
+        }
+      } catch (payError) {
+        console.error('Error retrieving payment session:', payError);
+      }
+    }
+
+    if (!customerId) {
+      return res.status(400).json({
+        message: 'No customer ID found for this user. Please contact support.'
+      });
+    }
+
+    console.log('Creating portal session for customer:', customerId);
 
     // Create a customer portal session
     const session = await stripe.billingPortal.sessions.create({
-      customer: user.stripe_customer_id,
+      customer: customerId,
       return_url: returnUrl,
     });
+
+    console.log('Portal session created:', session.id);
 
     // Return the URL for redirection
     res.status(200).json({ url: session.url });
@@ -192,67 +242,6 @@ router.post('/create-portal-session', async (req, res) => {
     console.error('Error creating portal session:', error);
     res.status(500).json({
       message: error.message || 'Failed to create portal session'
-    });
-  }
-});
-
-/**
- * @route POST /api/cancel-subscription
- * @desc Cancel a Stripe subscription
- * @access Public
- */
-router.post('/cancel-subscription', async (req, res) => {
-  try {
-    console.log('Cancel subscription request received:', req.body);
-
-    const { subscriptionId } = req.body;
-
-    if (!subscriptionId) {
-      return res.status(400).json({ message: 'Subscription ID is required' });
-    }
-
-    // Cancel the subscription at the end of the current period
-    const subscription = await stripe.subscriptions.update(subscriptionId, {
-      cancel_at_period_end: true,
-    });
-
-    // Get the user ID from the subscription metadata
-    const { data: user, error: userError } = await supabase
-      .from('users')
-      .select('*')
-      .eq('subscription_id', subscriptionId)
-      .single();
-
-    if (!userError && user) {
-      // Update the user's subscription status in the database
-      const { error: updateError } = await supabase
-        .from('users')
-        .update({
-          subscription_status: 'cancelled',
-          cancel_at: new Date(subscription.current_period_end * 1000).toISOString()
-        })
-        .eq('id', user.id);
-
-      if (updateError) {
-        console.error('Error updating user subscription status:', updateError);
-      }
-    }
-
-    // Return the updated subscription
-    res.status(200).json({
-      success: true,
-      message: 'Subscription canceled successfully',
-      subscription: {
-        id: subscription.id,
-        status: subscription.status,
-        cancel_at_period_end: subscription.cancel_at_period_end,
-        current_period_end: new Date(subscription.current_period_end * 1000).toISOString()
-      }
-    });
-  } catch (error) {
-    console.error('Error canceling subscription:', error);
-    res.status(500).json({
-      message: error.message || 'Failed to cancel subscription'
     });
   }
 });

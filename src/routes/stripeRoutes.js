@@ -1,10 +1,11 @@
 import express from 'express';
 import dotenv from 'dotenv';
-import { supabase } from '../services/supabaseService.js';
+import supabaseService from '../services/supabaseService.js';
 
 dotenv.config();
 
 const router = express.Router();
+const supabase = supabaseService.supabase;
 
 // Try to import Stripe with error handling
 let Stripe;

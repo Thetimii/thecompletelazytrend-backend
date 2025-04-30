@@ -60,41 +60,9 @@ router.post('/create-checkout-session', async (req, res) => {
       return res.status(400).json({ message: 'Success and cancel URLs are required' });
     }
 
-    // Create a customer if one doesn't exist
-    let customerId;
-
-    if (email) {
-      // Check if customer already exists
-      const customers = await stripe.customers.list({
-        email,
-        limit: 1
-      });
-
-      if (customers.data.length > 0) {
-        customerId = customers.data[0].id;
-      } else {
-        // Create a new customer
-        const customer = await stripe.customers.create({
-          email,
-          metadata: {
-            userId
-          }
-        });
-        customerId = customer.id;
-      }
-    }
-
-    // Create a checkout session
-    console.log('Creating checkout session with parameters:', {
-      priceId,
-      customerId,
-      userId,
-      email,
-      successUrl,
-      cancelUrl
-    });
-
+    // Simplified approach - create a checkout session directly
     try {
+      // Create the checkout session with minimal parameters
       const session = await stripe.checkout.sessions.create({
         payment_method_types: ['card'],
         line_items: [
@@ -106,16 +74,17 @@ router.post('/create-checkout-session', async (req, res) => {
         mode: 'subscription',
         success_url: `${successUrl}?session_id={CHECKOUT_SESSION_ID}`,
         cancel_url: cancelUrl,
-        customer: customerId,
+        customer_email: email,
         client_reference_id: userId,
-        customer_email: !customerId ? email : undefined,
         metadata: {
           userId
         }
       });
 
       console.log('Checkout session created successfully:', session.id);
-      res.json({ url: session.url });
+
+      // Return just the URL for redirection
+      return res.status(200).json({ url: session.url });
     } catch (sessionError) {
       console.error('Error creating checkout session:', sessionError);
 
@@ -123,10 +92,13 @@ router.post('/create-checkout-session', async (req, res) => {
       if (typeof stripe.checkout.sessions.create === 'function' &&
           stripe.checkout.sessions.create.toString().includes('mock')) {
         console.log('Using mock checkout URL');
-        return res.json({ url: 'https://example.com/mock-checkout' });
+        return res.status(200).json({ url: 'https://example.com/mock-checkout' });
       }
 
-      throw sessionError;
+      return res.status(500).json({
+        message: 'Failed to create checkout session',
+        error: sessionError.message
+      });
     }
   } catch (error) {
     console.error('Error creating checkout session:', error);

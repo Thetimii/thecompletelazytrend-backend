@@ -135,95 +135,194 @@ router.post('/webhook', express.raw({ type: 'application/json' }), async (req, r
 
   // Handle the event
   try {
+    console.log(`Processing webhook event: ${event.type}`, JSON.stringify(event.data.object, null, 2));
+
     switch (event.type) {
       case 'checkout.session.completed':
         const session = event.data.object;
+        console.log('Checkout session completed:', session.id);
+        console.log('Session details:', JSON.stringify({
+          client_reference_id: session.client_reference_id,
+          customer: session.customer,
+          metadata: session.metadata,
+          subscription: session.subscription
+        }, null, 2));
 
         // Get the user ID from the session metadata or client_reference_id
         const userId = session.metadata?.userId || session.client_reference_id;
+        console.log('Extracted userId:', userId);
 
         if (userId) {
-          // Get subscription details to check trial status
-          const subscription = await stripe.subscriptions.retrieve(session.subscription);
-          const isInTrial = subscription.status === 'trialing';
+          try {
+            // Get subscription details to check trial status
+            console.log('Retrieving subscription details for:', session.subscription);
+            const subscription = await stripe.subscriptions.retrieve(session.subscription);
+            const isInTrial = subscription.status === 'trialing';
+            console.log('Subscription status:', subscription.status, 'Is in trial:', isInTrial);
 
-          // Update user profile to mark payment as completed and onboarding as completed
-          const { error } = await supabase
-            .from('users')
-            .update({
-              payment_completed: true,
-              payment_date: new Date().toISOString(),
-              payment_id: session.id,
-              subscription_id: session.subscription,
-              subscription_status: isInTrial ? 'trialing' : 'active',
-              trial_end_date: isInTrial ? new Date(subscription.trial_end * 1000).toISOString() : null,
-              onboarding_completed: true
-            })
-            .eq('auth_id', userId);
+            // First check if user exists
+            const { data: existingUser, error: userError } = await supabase
+              .from('users')
+              .select('*')
+              .eq('auth_id', userId)
+              .single();
 
-          if (error) {
-            console.error('Error updating user profile:', error);
-          } else {
-            console.log(`User ${userId} payment completed and onboarding marked as complete. Trial status: ${isInTrial ? 'In trial' : 'Active'}`);
+            if (userError) {
+              console.error('Error finding user:', userError);
+              console.log('Will try to update anyway');
+            } else {
+              console.log('Found user:', existingUser.email);
+            }
+
+            // Update user profile to mark payment as completed and onboarding as completed
+            console.log('Updating user profile with payment information');
+            const { data, error } = await supabase
+              .from('users')
+              .update({
+                payment_completed: true,
+                payment_date: new Date().toISOString(),
+                payment_id: session.id,
+                subscription_id: session.subscription,
+                subscription_status: isInTrial ? 'trialing' : 'active',
+                trial_end_date: isInTrial ? new Date(subscription.trial_end * 1000).toISOString() : null,
+                onboarding_completed: true
+              })
+              .eq('auth_id', userId)
+              .select();
+
+            if (error) {
+              console.error('Error updating user profile:', error);
+            } else {
+              console.log('User profile updated successfully:', data);
+              console.log(`User ${userId} payment completed and onboarding marked as complete. Trial status: ${isInTrial ? 'In trial' : 'Active'}`);
+            }
+          } catch (subscriptionError) {
+            console.error('Error processing subscription:', subscriptionError);
           }
+        } else {
+          console.error('No userId found in session metadata or client_reference_id');
         }
         break;
 
       case 'customer.subscription.updated':
         const subscription = event.data.object;
         const customerId = subscription.customer;
+        console.log('Subscription updated:', subscription.id);
+        console.log('Subscription details:', JSON.stringify({
+          customer: customerId,
+          status: subscription.status,
+          trial_end: subscription.trial_end
+        }, null, 2));
 
-        // Get the customer to find the user ID
-        const customer = await stripe.customers.retrieve(customerId);
-        const userIdFromCustomer = customer.metadata?.userId;
+        try {
+          // Get the customer to find the user ID
+          console.log('Retrieving customer:', customerId);
+          const customer = await stripe.customers.retrieve(customerId);
+          console.log('Customer metadata:', customer.metadata);
+          const userIdFromCustomer = customer.metadata?.userId;
+          console.log('Extracted userId from customer:', userIdFromCustomer);
 
-        if (userIdFromCustomer) {
-          // Check if trial status changed
-          const isTrialEnd = subscription.status === 'active' &&
-                            subscription.trial_end &&
-                            subscription.trial_end < Math.floor(Date.now() / 1000);
+          if (userIdFromCustomer) {
+            // Check if trial status changed
+            const isTrialEnd = subscription.status === 'active' &&
+                              subscription.trial_end &&
+                              subscription.trial_end < Math.floor(Date.now() / 1000);
+            console.log('Is trial ending:', isTrialEnd);
 
-          // Update subscription status
-          const { error } = await supabase
-            .from('users')
-            .update({
-              subscription_status: subscription.status,
-              trial_end_date: subscription.trial_end ? new Date(subscription.trial_end * 1000).toISOString() : null,
-              // If trial ended and subscription is now active, update the payment date
-              payment_date: isTrialEnd ? new Date().toISOString() : undefined
-            })
-            .eq('auth_id', userIdFromCustomer);
+            // First check if user exists
+            const { data: existingUser, error: userError } = await supabase
+              .from('users')
+              .select('*')
+              .eq('auth_id', userIdFromCustomer)
+              .single();
 
-          if (error) {
-            console.error('Error updating subscription status:', error);
+            if (userError) {
+              console.error('Error finding user:', userError);
+              console.log('Will try to update anyway');
+            } else {
+              console.log('Found user:', existingUser.email);
+            }
+
+            // Update subscription status
+            console.log('Updating user subscription status');
+            const { data, error } = await supabase
+              .from('users')
+              .update({
+                subscription_status: subscription.status,
+                trial_end_date: subscription.trial_end ? new Date(subscription.trial_end * 1000).toISOString() : null,
+                // If trial ended and subscription is now active, update the payment date
+                payment_date: isTrialEnd ? new Date().toISOString() : undefined
+              })
+              .eq('auth_id', userIdFromCustomer)
+              .select();
+
+            if (error) {
+              console.error('Error updating subscription status:', error);
+            } else {
+              console.log('User subscription updated successfully:', data);
+              console.log(`User ${userIdFromCustomer} subscription status updated to ${subscription.status}`);
+            }
           } else {
-            console.log(`User ${userIdFromCustomer} subscription status updated to ${subscription.status}`);
+            console.error('No userId found in customer metadata');
           }
+        } catch (customerError) {
+          console.error('Error processing customer:', customerError);
         }
         break;
 
       case 'customer.subscription.deleted':
         const cancelledSubscription = event.data.object;
         const cancelledCustomerId = cancelledSubscription.customer;
+        console.log('Subscription deleted:', cancelledSubscription.id);
+        console.log('Subscription details:', JSON.stringify({
+          customer: cancelledCustomerId,
+          status: cancelledSubscription.status
+        }, null, 2));
 
-        // Get the customer to find the user ID
-        const cancelledCustomer = await stripe.customers.retrieve(cancelledCustomerId);
-        const cancelledUserId = cancelledCustomer.metadata?.userId;
+        try {
+          // Get the customer to find the user ID
+          console.log('Retrieving customer:', cancelledCustomerId);
+          const cancelledCustomer = await stripe.customers.retrieve(cancelledCustomerId);
+          console.log('Customer metadata:', cancelledCustomer.metadata);
+          const cancelledUserId = cancelledCustomer.metadata?.userId;
+          console.log('Extracted userId from customer:', cancelledUserId);
 
-        if (cancelledUserId) {
-          // Update subscription status
-          const { error } = await supabase
-            .from('users')
-            .update({
-              subscription_status: 'cancelled'
-            })
-            .eq('auth_id', cancelledUserId);
+          if (cancelledUserId) {
+            // First check if user exists
+            const { data: existingUser, error: userError } = await supabase
+              .from('users')
+              .select('*')
+              .eq('auth_id', cancelledUserId)
+              .single();
 
-          if (error) {
-            console.error('Error updating subscription status to cancelled:', error);
+            if (userError) {
+              console.error('Error finding user:', userError);
+              console.log('Will try to update anyway');
+            } else {
+              console.log('Found user:', existingUser.email);
+            }
+
+            // Update subscription status
+            console.log('Updating user subscription status to cancelled');
+            const { data, error } = await supabase
+              .from('users')
+              .update({
+                subscription_status: 'cancelled'
+              })
+              .eq('auth_id', cancelledUserId)
+              .select();
+
+            if (error) {
+              console.error('Error updating subscription status to cancelled:', error);
+            } else {
+              console.log('User subscription cancelled successfully:', data);
+              console.log(`User ${cancelledUserId} subscription cancelled`);
+            }
           } else {
-            console.log(`User ${cancelledUserId} subscription cancelled`);
+            console.error('No userId found in customer metadata');
           }
+        } catch (customerError) {
+          console.error('Error processing customer:', customerError);
         }
         break;
 
@@ -232,9 +331,18 @@ router.post('/webhook', express.raw({ type: 'application/json' }), async (req, r
     }
   } catch (error) {
     console.error(`Error processing webhook event: ${error.message}`);
+    console.error('Error stack:', error.stack);
+    // Log the event that caused the error
+    try {
+      console.error('Event that caused error:', JSON.stringify(event, null, 2));
+    } catch (jsonError) {
+      console.error('Could not stringify event:', jsonError);
+    }
   }
 
-  // Return a 200 response to acknowledge receipt of the event
+  // Always return a 200 response to acknowledge receipt of the event
+  // This is important for Stripe to know we received the webhook
+  console.log('Webhook processing completed, returning 200 response');
   res.json({ received: true });
 });
 

@@ -62,6 +62,10 @@ router.post('/create-checkout-session', async (req, res) => {
 
     // Simplified approach - create a checkout session directly
     try {
+      // Check if success URL already has query parameters
+      const hasQueryParams = successUrl.includes('?');
+      const successUrlWithSessionId = `${successUrl}${hasQueryParams ? '&' : '?'}session_id={CHECKOUT_SESSION_ID}`;
+
       // Create the checkout session with minimal parameters and a 7-day free trial
       const session = await stripe.checkout.sessions.create({
         payment_method_types: ['card'],
@@ -75,7 +79,7 @@ router.post('/create-checkout-session', async (req, res) => {
         subscription_data: {
           trial_period_days: 7, // Add a 7-day free trial
         },
-        success_url: `${successUrl}?session_id={CHECKOUT_SESSION_ID}`,
+        success_url: successUrlWithSessionId,
         cancel_url: cancelUrl,
         customer_email: email,
         client_reference_id: userId,
@@ -147,12 +151,12 @@ router.post('/webhook', express.raw({ type: 'application/json' }), async (req, r
           const { error } = await supabase
             .from('users')
             .update({
-              payment_completed: true, // Mark as completed even during trial
+              payment_completed: true,
               payment_date: new Date().toISOString(),
               payment_id: session.id,
               subscription_id: session.subscription,
               subscription_status: isInTrial ? 'trialing' : 'active',
-              trial_end: isInTrial ? new Date(subscription.trial_end * 1000).toISOString() : null,
+              trial_end_date: isInTrial ? new Date(subscription.trial_end * 1000).toISOString() : null,
               onboarding_completed: true
             })
             .eq('auth_id', userId);
@@ -184,7 +188,7 @@ router.post('/webhook', express.raw({ type: 'application/json' }), async (req, r
             .from('users')
             .update({
               subscription_status: subscription.status,
-              trial_end: subscription.trial_end ? new Date(subscription.trial_end * 1000).toISOString() : null,
+              trial_end_date: subscription.trial_end ? new Date(subscription.trial_end * 1000).toISOString() : null,
               // If trial ended and subscription is now active, update the payment date
               payment_date: isTrialEnd ? new Date().toISOString() : undefined
             })
@@ -193,11 +197,7 @@ router.post('/webhook', express.raw({ type: 'application/json' }), async (req, r
           if (error) {
             console.error('Error updating subscription status:', error);
           } else {
-            if (isTrialEnd) {
-              console.log(`User ${userIdFromCustomer} trial ended, subscription is now active`);
-            } else {
-              console.log(`User ${userIdFromCustomer} subscription status updated to ${subscription.status}`);
-            }
+            console.log(`User ${userIdFromCustomer} subscription status updated to ${subscription.status}`);
           }
         }
         break;

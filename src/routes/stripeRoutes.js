@@ -116,11 +116,29 @@ router.post('/create-checkout-session', async (req, res) => {
 });
 
 /**
+ * @route GET /api/webhook-test
+ * @desc Test endpoint to verify webhook URL
+ * @access Public
+ */
+router.get('/webhook-test', (req, res) => {
+  console.log('Webhook test endpoint called');
+  res.json({
+    success: true,
+    message: 'Webhook endpoint is accessible',
+    timestamp: new Date().toISOString(),
+    headers: req.headers
+  });
+});
+
+/**
  * @route POST /api/webhook
  * @desc Handle Stripe webhook events
  * @access Public
  */
 router.post('/webhook', express.raw({ type: 'application/json' }), async (req, res) => {
+  console.log('Webhook endpoint called with method:', req.method);
+  console.log('Webhook headers:', req.headers);
+  console.log('Webhook body type:', typeof req.body);
   const sig = req.headers['stripe-signature'];
   const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
 

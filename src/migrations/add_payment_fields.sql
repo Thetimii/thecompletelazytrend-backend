@@ -1,0 +1,6 @@
+-- Add payment fields to users table
+ALTER TABLE users ADD COLUMN IF NOT EXISTS payment_completed BOOLEAN DEFAULT FALSE;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS payment_date TIMESTAMP WITH TIME ZONE;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS payment_id TEXT;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS subscription_id TEXT;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS subscription_status TEXT;

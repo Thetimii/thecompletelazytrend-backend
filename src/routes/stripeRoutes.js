@@ -9,28 +9,25 @@ const router = express.Router();
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
 
 /**
- * @route POST /api/create-payment-intent
- * @desc Create a payment intent for Stripe
+ * @route POST /api/create-checkout-session
+ * @desc Create a Stripe Checkout session
  * @access Public
  */
-router.post('/create-payment-intent', async (req, res) => {
+router.post('/create-checkout-session', async (req, res) => {
   try {
-    const { priceId, userId, email } = req.body;
+    const { priceId, userId, email, successUrl, cancelUrl } = req.body;
 
     if (!priceId) {
       return res.status(400).json({ message: 'Price ID is required' });
     }
 
-    // Get the price from Stripe
-    const price = await stripe.prices.retrieve(priceId);
-
-    if (!price) {
-      return res.status(404).json({ message: 'Price not found' });
+    if (!successUrl || !cancelUrl) {
+      return res.status(400).json({ message: 'Success and cancel URLs are required' });
     }
 
     // Create a customer if one doesn't exist
     let customerId;
-    
+
     if (email) {
       // Check if customer already exists
       const customers = await stripe.customers.list({
@@ -52,31 +49,31 @@ router.post('/create-payment-intent', async (req, res) => {
       }
     }
 
-    // Create a payment intent
-    const paymentIntent = await stripe.paymentIntents.create({
-      amount: price.unit_amount,
-      currency: price.currency,
+    // Create a checkout session
+    const session = await stripe.checkout.sessions.create({
+      payment_method_types: ['card'],
+      line_items: [
+        {
+          price: priceId,
+          quantity: 1,
+        },
+      ],
+      mode: 'subscription',
+      success_url: `${successUrl}?session_id={CHECKOUT_SESSION_ID}`,
+      cancel_url: cancelUrl,
       customer: customerId,
+      client_reference_id: userId,
+      customer_email: !customerId ? email : undefined,
       metadata: {
-        userId,
-        priceId,
-        productId: price.product
-      },
-      receipt_email: email,
-      automatic_payment_methods: {
-        enabled: true,
-      },
+        userId
+      }
     });
 
-    res.json({
-      clientSecret: paymentIntent.client_secret,
-      amount: price.unit_amount,
-      currency: price.currency
-    });
+    res.json({ url: session.url });
   } catch (error) {
-    console.error('Error creating payment intent:', error);
+    console.error('Error creating checkout session:', error);
     res.status(500).json({
-      message: error.message || 'Failed to create payment intent'
+      message: error.message || 'Failed to create checkout session'
     });
   }
 });
@@ -100,20 +97,24 @@ router.post('/webhook', express.raw({ type: 'application/json' }), async (req, r
   }
 
   // Handle the event
-  switch (event.type) {
-    case 'payment_intent.succeeded':
-      const paymentIntent = event.data.object;
-      const userId = paymentIntent.metadata.userId;
+  try {
+    switch (event.type) {
+      case 'checkout.session.completed':
+        const session = event.data.object;
 
-      if (userId) {
-        try {
+        // Get the user ID from the session metadata or client_reference_id
+        const userId = session.metadata?.userId || session.client_reference_id;
+
+        if (userId) {
           // Update user profile to mark payment as completed and onboarding as completed
           const { error } = await supabase
             .from('users')
             .update({
               payment_completed: true,
               payment_date: new Date().toISOString(),
-              payment_id: paymentIntent.id,
+              payment_id: session.id,
+              subscription_id: session.subscription,
+              subscription_status: 'active',
               onboarding_completed: true
             })
             .eq('auth_id', userId);
@@ -123,19 +124,64 @@ router.post('/webhook', express.raw({ type: 'application/json' }), async (req, r
           } else {
             console.log(`User ${userId} payment completed and onboarding marked as complete`);
           }
-        } catch (dbError) {
-          console.error('Database error:', dbError);
         }
-      }
-      break;
-    
-    case 'payment_intent.payment_failed':
-      const failedPaymentIntent = event.data.object;
-      console.log(`Payment failed for user ${failedPaymentIntent.metadata.userId}`);
-      break;
-    
-    default:
-      console.log(`Unhandled event type ${event.type}`);
+        break;
+
+      case 'customer.subscription.updated':
+        const subscription = event.data.object;
+        const customerId = subscription.customer;
+
+        // Get the customer to find the user ID
+        const customer = await stripe.customers.retrieve(customerId);
+        const userIdFromCustomer = customer.metadata?.userId;
+
+        if (userIdFromCustomer) {
+          // Update subscription status
+          const { error } = await supabase
+            .from('users')
+            .update({
+              subscription_status: subscription.status
+            })
+            .eq('auth_id', userIdFromCustomer);
+
+          if (error) {
+            console.error('Error updating subscription status:', error);
+          } else {
+            console.log(`User ${userIdFromCustomer} subscription status updated to ${subscription.status}`);
+          }
+        }
+        break;
+
+      case 'customer.subscription.deleted':
+        const cancelledSubscription = event.data.object;
+        const cancelledCustomerId = cancelledSubscription.customer;
+
+        // Get the customer to find the user ID
+        const cancelledCustomer = await stripe.customers.retrieve(cancelledCustomerId);
+        const cancelledUserId = cancelledCustomer.metadata?.userId;
+
+        if (cancelledUserId) {
+          // Update subscription status
+          const { error } = await supabase
+            .from('users')
+            .update({
+              subscription_status: 'cancelled'
+            })
+            .eq('auth_id', cancelledUserId);
+
+          if (error) {
+            console.error('Error updating subscription status to cancelled:', error);
+          } else {
+            console.log(`User ${cancelledUserId} subscription cancelled`);
+          }
+        }
+        break;
+
+      default:
+        console.log(`Unhandled event type ${event.type}`);
+    }
+  } catch (error) {
+    console.error(`Error processing webhook event: ${error.message}`);
   }
 
   // Return a 200 response to acknowledge receipt of the event

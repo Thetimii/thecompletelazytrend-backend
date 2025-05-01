@@ -166,23 +166,9 @@ export const saveTrendQuery = async (queryData) => {
           .maybeSingle();
 
         if (userError || !userData) {
-          console.log(`User with auth_id ${queryData.userId} not found in users table. Creating temporary entry.`);
-
-          // Create a temporary user entry
-          const { data: newUser, error: createError } = await supabase
-            .from('users')
-            .insert({
-              auth_id: queryData.userId,
-              email: `temp_${queryData.userId}@example.com`,
-              created_at: new Date().toISOString()
-            })
-            .select();
-
-          if (createError) {
-            console.error(`Error creating temporary user: ${createError.message}`);
-            // If we can't create a user, save the query without a user ID
-            queryData.userId = null;
-          }
+          console.log(`User with auth_id ${queryData.userId} not found in users table.`);
+          // Don't create temporary users, just set userId to null
+          queryData.userId = null;
         }
       } catch (userCheckError) {
         console.error(`Error checking user existence: ${userCheckError.message}`);
@@ -325,20 +311,17 @@ export const saveRecommendation = async (recommendationData) => {
           insertData.user_id = userProfile.id;
           console.log(`Found user with id: ${userProfile.id} for auth_id: ${recommendationData.userId}`);
         } else {
-          // Fallback to a known valid user ID
-          insertData.user_id = 1; // Using ID 1 as a fallback
-          console.log(`No user found for auth_id: ${recommendationData.userId}, using fallback user_id: ${insertData.user_id}`);
+          console.error(`No user found for auth_id: ${recommendationData.userId}. Cannot save recommendation without a valid user.`);
+          throw new Error(`No user found for auth_id: ${recommendationData.userId}`);
         }
       } catch (userError) {
         console.error(`Error looking up user: ${userError.message}`);
-        // Fallback to a known valid user ID
-        insertData.user_id = 1; // Using ID 1 as a fallback
-        console.log(`Error looking up user, using fallback user_id: ${insertData.user_id}`);
+        throw new Error(`Error looking up user: ${userError.message}`);
       }
     } else {
-      // No userId provided, use a fallback
-      insertData.user_id = 1; // Using ID 1 as a fallback
-      console.log(`No userId provided, using fallback user_id: ${insertData.user_id}`);
+      // No userId provided, this is an error
+      console.error('No userId provided for recommendation. Cannot save recommendation without a valid user.');
+      throw new Error('No userId provided for recommendation');
     }
 
     const { data, error } = await supabase

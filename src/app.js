@@ -13,6 +13,7 @@ import summarizeTrendsRouter from './routes/summarizeTrends.js';
 import deleteVideosRouter from './routes/deleteVideos.js';
 import testRouter from './routes/test.js';
 import stripeRoutes from './routes/stripeRoutes.js';
+import feedbackRoutes from './routes/feedbackRoutes.js';
 
 // Load environment variables
 dotenv.config();
@@ -97,6 +98,7 @@ app.use('/api/complete-workflow', completeWorkflowRouter);
 app.use('/api/summarize-trends', summarizeTrendsRouter);
 app.use('/api/delete-videos', deleteVideosRouter);
 app.use('/api', stripeRoutes);
+app.use('/api/feedback', feedbackRoutes);
 
 // Basic health check route
 app.get('/', (_req, res) => {

@@ -61,12 +61,12 @@ backend/
 
 ## API Endpoints
 
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/api/generate-queries` | POST | Generate search queries from business description |
-| `/api/scrape-tiktoks` | POST | Scrape TikTok videos from search queries |
-| `/api/analyze-videos` | POST | Analyze uploaded videos using Qwen |
-| `/api/reconstruct-videos` | POST | Summarize and reconstruct video strategies |
+| Endpoint                  | Method | Description                                       |
+| ------------------------- | ------ | ------------------------------------------------- |
+| `/api/generate-queries`   | POST   | Generate search queries from business description |
+| `/api/scrape-tiktoks`     | POST   | Scrape TikTok videos from search queries          |
+| `/api/analyze-videos`     | POST   | Analyze uploaded videos using Qwen                |
+| `/api/reconstruct-videos` | POST   | Summarize and reconstruct video strategies        |
 
 ## Deployment
 
@@ -81,4 +81,5 @@ This backend is designed to be deployed on Render.com:
 - No videos are ever saved locally - all content is streamed directly to Supabase Storage
 - API keys are stored in environment variables
 - Service uses Supabase's service role key for authenticated uploads
+
 # thecompletelazytrend-backend

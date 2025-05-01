@@ -88,11 +88,11 @@ export const saveTikTokVideo = async (videoData, trendQueryId) => {
     // Check the actual column names in the database
     const insertData = {
       video_url: videoData.video_url || videoData.originalUrl || `https://www.tiktok.com/@${videoData.author || 'unknown'}/video/unknown`,
-      caption: videoData.description || videoData.caption || '',
+      caption: videoData.caption || videoData.description || '',
       views: videoData.views || 0,
       likes: videoData.likes || 0,
       downloads: 0,
-      hashtags: extractHashtags(videoData.description || videoData.caption || ''),
+      hashtags: extractHashtags(videoData.caption || videoData.description || ''),
       created_at: new Date().toISOString()
     };
 
@@ -106,7 +106,9 @@ export const saveTikTokVideo = async (videoData, trendQueryId) => {
     console.log(`Video Storage URL: ${insertData.videoUrl || 'none'}`);
 
     // Check if the thumbnail URL exists
-    if (videoData.coverUrl) {
+    if (videoData.thumbnail_url) {
+      insertData.thumbnail_url = videoData.thumbnail_url;
+    } else if (videoData.coverUrl) {
       insertData.thumbnail_url = videoData.coverUrl;
     }
 

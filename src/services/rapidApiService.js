@@ -114,6 +114,11 @@ export const scrapeTikTokVideos = async (searchQueries, videosPerQuery = 3, user
               continue;
             }
 
+            // Log the download data to see what fields are available
+            console.log('Download data fields:', Object.keys(downloadData));
+            console.log('Download data origin_cover:', downloadData.origin_cover);
+            console.log('Download data title:', downloadData.title);
+
             // Download the video
             console.log(`Downloading video from: ${videoDownloadUrl}`);
             let supabaseUrl = null;
@@ -157,15 +162,15 @@ export const scrapeTikTokVideos = async (searchQueries, videosPerQuery = 3, user
             const processedVideo = {
               id: videoId || `video-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
               author: video.author.unique_id || 'TikTok User',
-              title: video.title || query,
-              description: video.title || query,
+              title: downloadData.title || video.title || query,
+              description: downloadData.title || video.title || query,
               likes: video.digg_count || 0,
               comments: video.comment_count || 0,
               shares: video.share_count || 0,
               views: video.play_count || 0,
               originalUrl: videoUrl,
               supabaseUrl: supabaseUrl,
-              coverUrl: video.cover || '',
+              coverUrl: downloadData.origin_cover || downloadData.cover || video.cover || '',
               searchQuery: query
             };
 
@@ -182,7 +187,8 @@ export const scrapeTikTokVideos = async (searchQueries, videosPerQuery = 3, user
                 views: processedVideo.views,
                 video_url: videoUrl || `https://www.tiktok.com/@${processedVideo.author}/video/unknown`,  // Ensure video_url is never null
                 download_url: supabaseUrl,
-                thumbnailUrl: processedVideo.coverUrl
+                thumbnail_url: processedVideo.coverUrl, // Use the correct field name for the database
+                caption: processedVideo.description // Save the caption properly
               };
 
               // Log the video metadata for debugging

@@ -342,6 +342,7 @@ router.post('/webhook', express.raw({ type: 'application/json' }), async (req, r
               payment_date: new Date().toISOString(),
               payment_id: session.id,
               subscription_id: session.subscription,
+              stripe_customer_id: session.customer, // Store the customer ID for future lookups
               subscription_status: isInTrial ? 'trialing' : 'active',
               trial_end_date: isInTrial ? new Date(subscription.trial_end * 1000).toISOString() : null,
               onboarding_completed: true
@@ -398,98 +399,158 @@ router.post('/webhook', express.raw({ type: 'application/json' }), async (req, r
         }, null, 2));
 
         try {
-          // Get the customer to find the user ID
-          console.log('Retrieving customer:', customerId);
-          const customer = await stripe.customers.retrieve(customerId);
-          console.log('Customer metadata:', customer.metadata);
-          const userIdFromCustomer = customer.metadata?.userId;
-          console.log('Extracted userId from customer:', userIdFromCustomer);
+          // Check if trial status changed
+          const isTrialEnd = subscription.status === 'active' &&
+                            subscription.trial_end &&
+                            subscription.trial_end < Math.floor(Date.now() / 1000);
+          console.log('Is trial ending:', isTrialEnd);
 
-          if (userIdFromCustomer) {
-            // Check if trial status changed
-            const isTrialEnd = subscription.status === 'active' &&
-                              subscription.trial_end &&
-                              subscription.trial_end < Math.floor(Date.now() / 1000);
-            console.log('Is trial ending:', isTrialEnd);
+          // Check if subscription is being canceled
+          const isCanceled = subscription.cancel_at_period_end === true;
+          console.log('Is subscription being canceled:', isCanceled);
 
-            // First try to find user by auth_id
-            console.log('Trying to find user by auth_id:', userIdFromCustomer);
-            let { data: existingUser, error: userError } = await supabase
+          // First try to find user by subscription_id
+          console.log('Trying to find user by subscription_id:', subscription.id);
+          let { data: existingUser, error: subError } = await supabase
+            .from('users')
+            .select('*')
+            .eq('subscription_id', subscription.id)
+            .single();
+
+          // If not found by subscription_id, try by customer_id
+          if (subError) {
+            console.log('User not found by subscription_id, trying by customer_id:', customerId);
+
+            // Check if we have a stripe_customer_id column
+            const { data: userByCustomer, error: customerError } = await supabase
               .from('users')
               .select('*')
-              .eq('auth_id', userIdFromCustomer)
+              .eq('stripe_customer_id', customerId)
               .single();
 
-            // If not found by auth_id, try by id
-            if (userError) {
-              console.log('User not found by auth_id, trying by id');
-              const { data: userById, error: idError } = await supabase
-                .from('users')
-                .select('*')
-                .eq('id', userIdFromCustomer)
-                .single();
+            if (customerError) {
+              console.log('User not found by customer_id, trying to find by email');
 
-              if (idError) {
-                console.error('Error finding user by id:', idError);
-                console.log('Will try to update anyway');
-              } else {
-                existingUser = userById;
-                console.log('Found user by id:', existingUser.email);
+              // Try to get customer details to find email
+              try {
+                const customer = await stripe.customers.retrieve(customerId);
+                console.log('Customer email:', customer.email);
+
+                if (customer.email) {
+                  const { data: userByEmail, error: emailError } = await supabase
+                    .from('users')
+                    .select('*')
+                    .eq('email', customer.email)
+                    .single();
+
+                  if (emailError) {
+                    console.error('Error finding user by email:', emailError);
+                  } else {
+                    existingUser = userByEmail;
+                    console.log('Found user by email:', existingUser.email);
+
+                    // Update the user with the stripe_customer_id for future lookups
+                    const { error: updateCustomerIdError } = await supabase
+                      .from('users')
+                      .update({
+                        stripe_customer_id: customerId,
+                        subscription_id: subscription.id
+                      })
+                      .eq('id', existingUser.id);
+
+                    if (updateCustomerIdError) {
+                      console.error('Error updating user with customer ID:', updateCustomerIdError);
+                    } else {
+                      console.log('Updated user with customer ID and subscription ID');
+                    }
+                  }
+                }
+              } catch (stripeError) {
+                console.error('Error retrieving customer from Stripe:', stripeError);
               }
             } else {
-              console.log('Found user by auth_id:', existingUser.email);
+              existingUser = userByCustomer;
+              console.log('Found user by customer_id:', existingUser.email);
+
+              // Update subscription_id if it's missing
+              if (!existingUser.subscription_id) {
+                const { error: updateSubIdError } = await supabase
+                  .from('users')
+                  .update({ subscription_id: subscription.id })
+                  .eq('id', existingUser.id);
+
+                if (updateSubIdError) {
+                  console.error('Error updating subscription ID:', updateSubIdError);
+                } else {
+                  console.log('Updated user with subscription ID');
+                }
+              }
             }
+          } else {
+            console.log('Found user by subscription_id:', existingUser.email);
 
-            // Determine which field to use for the update
-            const updateField = existingUser ? (existingUser.auth_id ? 'auth_id' : 'id') : 'auth_id';
-            console.log(`Will update user using ${updateField} field with value:`, userIdFromCustomer);
+            // Update customer_id if it's missing
+            if (!existingUser.stripe_customer_id) {
+              const { error: updateCustomerIdError } = await supabase
+                .from('users')
+                .update({ stripe_customer_id: customerId })
+                .eq('id', existingUser.id);
 
+              if (updateCustomerIdError) {
+                console.error('Error updating customer ID:', updateCustomerIdError);
+              } else {
+                console.log('Updated user with customer ID');
+              }
+            }
+          }
+
+          if (existingUser) {
             // Update subscription status
-            console.log('Updating user subscription status');
+            console.log('Updating user subscription status for user:', existingUser.id);
             const updateData = {
               subscription_status: subscription.status,
               trial_end_date: subscription.trial_end ? new Date(subscription.trial_end * 1000).toISOString() : null,
               // If trial ended and subscription is now active, update the payment date
               payment_date: isTrialEnd ? new Date().toISOString() : undefined
             };
+
+            // If subscription is being canceled, update the cancel_at field
+            if (isCanceled) {
+              updateData.subscription_status = 'cancelled';
+              updateData.cancel_at = subscription.cancel_at
+                ? new Date(subscription.cancel_at * 1000).toISOString()
+                : (subscription.trial_end
+                  ? new Date(subscription.trial_end * 1000).toISOString()
+                  : null);
+            }
+
             console.log('Update data:', JSON.stringify(updateData, null, 2));
 
-            // Try to update by auth_id first
-            let { data, error } = await supabase
+            const { data, error } = await supabase
               .from('users')
               .update(updateData)
-              .eq('auth_id', userIdFromCustomer)
+              .eq('id', existingUser.id)
               .select();
-
-            // If that fails, try by id
-            if (error || (data && data.length === 0)) {
-              console.log('Update by auth_id failed, trying by id');
-              const { data: dataById, error: errorById } = await supabase
-                .from('users')
-                .update(updateData)
-                .eq('id', userIdFromCustomer)
-                .select();
-
-              if (errorById) {
-                console.error('Error updating by id:', errorById);
-                error = errorById;
-              } else {
-                data = dataById;
-                console.log('Update by id succeeded');
-              }
-            }
 
             if (error) {
               console.error('Error updating subscription status:', error);
             } else {
               console.log('User subscription updated successfully:', data);
-              console.log(`User ${userIdFromCustomer} subscription status updated to ${subscription.status}`);
+              console.log(`User ${existingUser.id} subscription status updated to ${updateData.subscription_status}`);
             }
           } else {
-            console.error('No userId found in customer metadata');
+            console.error('Could not find user associated with this subscription');
+
+            // List all users to help with debugging
+            const { data: allUsers } = await supabase
+              .from('users')
+              .select('id, auth_id, email, subscription_id, stripe_customer_id')
+              .limit(10);
+
+            console.log('Available users:', JSON.stringify(allUsers, null, 2));
           }
-        } catch (customerError) {
-          console.error('Error processing customer:', customerError);
+        } catch (error) {
+          console.error('Error processing subscription update:', error);
         }
         break;
 
@@ -503,13 +564,6 @@ router.post('/webhook', express.raw({ type: 'application/json' }), async (req, r
         }, null, 2));
 
         try {
-          // Get the customer to find the user ID
-          console.log('Retrieving customer:', cancelledCustomerId);
-          const cancelledCustomer = await stripe.customers.retrieve(cancelledCustomerId);
-          console.log('Customer metadata:', cancelledCustomer.metadata);
-          const cancelledUserId = cancelledCustomer.metadata?.userId;
-          console.log('Extracted userId from customer:', cancelledUserId);
-
           // First try to find user by subscription_id
           console.log('Trying to find user by subscription_id:', cancelledSubscription.id);
           let { data: userBySubscription, error: subscriptionError } = await supabase
@@ -528,37 +582,29 @@ router.post('/webhook', express.raw({ type: 'application/json' }), async (req, r
               .single();
 
             if (customerError) {
-              console.log('User not found by customer_id, trying by auth_id/id');
-              // If we have a userId from metadata, try that
-              if (cancelledUserId) {
-                // First try to find user by auth_id
-                console.log('Trying to find user by auth_id:', cancelledUserId);
-                let { data: existingUser, error: userError } = await supabase
-                  .from('users')
-                  .select('*')
-                  .eq('auth_id', cancelledUserId)
-                  .single();
+              console.log('User not found by customer_id, trying to find by email');
 
-                // If not found by auth_id, try by id
-                if (userError) {
-                  console.log('User not found by auth_id, trying by id');
-                  const { data: userById, error: idError } = await supabase
+              // Try to get customer details to find email
+              try {
+                const customer = await stripe.customers.retrieve(cancelledCustomerId);
+                console.log('Customer email:', customer.email);
+
+                if (customer.email) {
+                  const { data: userByEmail, error: emailError } = await supabase
                     .from('users')
                     .select('*')
-                    .eq('id', cancelledUserId)
+                    .eq('email', customer.email)
                     .single();
 
-                  if (idError) {
-                    console.error('Error finding user by id:', idError);
-                    console.log('Will try to update anyway');
+                  if (emailError) {
+                    console.error('Error finding user by email:', emailError);
                   } else {
-                    userBySubscription = userById;
-                    console.log('Found user by id:', userBySubscription.email);
+                    userBySubscription = userByEmail;
+                    console.log('Found user by email:', userBySubscription.email);
                   }
-                } else {
-                  userBySubscription = existingUser;
-                  console.log('Found user by auth_id:', userBySubscription.email);
                 }
+              } catch (stripeError) {
+                console.error('Error retrieving customer from Stripe:', stripeError);
               }
             } else {
               userBySubscription = userByCustomer;
@@ -594,9 +640,17 @@ router.post('/webhook', express.raw({ type: 'application/json' }), async (req, r
             }
           } else {
             console.error('Could not find user associated with the cancelled subscription');
+
+            // List all users to help with debugging
+            const { data: allUsers } = await supabase
+              .from('users')
+              .select('id, auth_id, email, subscription_id, stripe_customer_id')
+              .limit(10);
+
+            console.log('Available users:', JSON.stringify(allUsers, null, 2));
           }
-        } catch (customerError) {
-          console.error('Error processing subscription cancellation:', customerError);
+        } catch (error) {
+          console.error('Error processing subscription cancellation:', error);
         }
         break;
 

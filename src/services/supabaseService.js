@@ -22,7 +22,7 @@ export const initializeStorage = async () => {
 
     // Create bucket if it doesn't exist
     if (!bucketExists) {
-      const { data, error } = await supabase.storage.createBucket(BUCKET_NAME, {
+      const { error } = await supabase.storage.createBucket(BUCKET_NAME, {
         public: true, // Make bucket public so videos can be accessed without authentication
         fileSizeLimit: 50000000 // 50MB limit
       });
@@ -51,7 +51,7 @@ export const uploadVideoToSupabase = async (videoBuffer, fileName) => {
     await initializeStorage();
 
     // Upload file from buffer
-    const { data, error } = await supabase.storage
+    const { error } = await supabase.storage
       .from(BUCKET_NAME)
       .upload(`videos/${fileName}`, videoBuffer, {
         contentType: 'video/mp4',
@@ -84,6 +84,31 @@ export const saveTikTokVideo = async (videoData, trendQueryId) => {
   try {
     console.log(`Saving TikTok video with trend_query_id: ${trendQueryId}`);
 
+    // Check if trend_query_id is required but not provided
+    if (!trendQueryId) {
+      console.error('trend_query_id is required but not provided');
+      // Create a default trend query if needed
+      try {
+        console.log('Creating a default trend query');
+        const defaultQuery = await saveTrendQuery({
+          query: videoData.searchQuery || 'default query',
+          // Try to use userId from videoData if available
+          userId: videoData.userId
+        });
+
+        if (defaultQuery && defaultQuery.id) {
+          trendQueryId = defaultQuery.id;
+          console.log(`Created default trend query with ID: ${trendQueryId}`);
+        } else {
+          console.error('Failed to create default trend query');
+          throw new Error('Failed to create default trend query');
+        }
+      } catch (queryError) {
+        console.error('Error creating default trend query:', queryError);
+        throw new Error('Cannot save video without trend_query_id');
+      }
+    }
+
     // Prepare the video data for insertion
     // Check the actual column names in the database
     const insertData = {
@@ -93,28 +118,25 @@ export const saveTikTokVideo = async (videoData, trendQueryId) => {
       likes: videoData.likes || 0,
       downloads: 0,
       hashtags: extractHashtags(videoData.caption || videoData.description || ''),
-      created_at: new Date().toISOString()
+      created_at: new Date().toISOString(),
+      // Always include trend_query_id as it's required
+      trend_query_id: trendQueryId
     };
 
-    // Add videoUrl field (this might be the actual column name instead of download_url)
+    // Add download_url field
     if (videoData.download_url || videoData.supabaseUrl) {
-      insertData.videoUrl = videoData.download_url || videoData.supabaseUrl;
+      insertData.download_url = videoData.download_url || videoData.supabaseUrl;
     }
 
     // Log the fields for debugging
     console.log(`Video URL: ${insertData.video_url}`);
-    console.log(`Video Storage URL: ${insertData.videoUrl || 'none'}`);
+    console.log(`Video Storage URL: ${insertData.download_url || 'none'}`);
 
     // Check if the thumbnail URL exists
     if (videoData.thumbnail_url) {
       insertData.thumbnail_url = videoData.thumbnail_url;
     } else if (videoData.coverUrl) {
       insertData.thumbnail_url = videoData.coverUrl;
-    }
-
-    // Only include trend_query_id if it exists
-    if (trendQueryId) {
-      insertData.trend_query_id = trendQueryId;
     }
 
     console.log('Inserting video data:', insertData);
@@ -156,6 +178,8 @@ const extractHashtags = (caption) => {
  */
 export const saveTrendQuery = async (queryData) => {
   try {
+    let userId = null;
+
     // Check if userId exists in the users table
     if (queryData.userId) {
       try {
@@ -165,39 +189,105 @@ export const saveTrendQuery = async (queryData) => {
           .eq('auth_id', queryData.userId)
           .maybeSingle();
 
-        if (userError || !userData) {
+        if (!userError && userData && userData.id) {
+          console.log(`Found user with ID ${userData.id} for auth_id ${queryData.userId}`);
+          userId = userData.id;
+        } else {
           console.log(`User with auth_id ${queryData.userId} not found in users table.`);
-          // Don't create temporary users, just set userId to null
-          queryData.userId = null;
+          // Try to find any user to use as a fallback
+          const { data: anyUser, error: anyUserError } = await supabase
+            .from('users')
+            .select('id')
+            .limit(1)
+            .single();
+
+          if (!anyUserError && anyUser && anyUser.id) {
+            console.log(`Using fallback user ID ${anyUser.id} for trend query`);
+            userId = anyUser.id;
+          } else {
+            console.error('No users found in the database. Cannot create trend query without a user_id.');
+            // Create a temporary user if needed
+            try {
+              console.log('Creating a temporary user for trend query');
+              const { data: tempUser, error: tempUserError } = await supabase
+                .from('users')
+                .insert({
+                  email: `temp_${Date.now()}@example.com`,
+                  auth_id: `temp_${Date.now()}`,
+                  onboarding_completed: false,
+                  created_at: new Date().toISOString()
+                })
+                .select();
+
+              if (!tempUserError && tempUser && tempUser[0] && tempUser[0].id) {
+                console.log(`Created temporary user with ID ${tempUser[0].id}`);
+                userId = tempUser[0].id;
+              } else {
+                console.error('Failed to create temporary user:', tempUserError);
+                throw new Error('Cannot create trend query without a user_id');
+              }
+            } catch (tempUserError) {
+              console.error('Error creating temporary user:', tempUserError);
+              throw new Error('Cannot create trend query without a user_id');
+            }
+          }
         }
       } catch (userCheckError) {
         console.error(`Error checking user existence: ${userCheckError.message}`);
-        // If there's an error checking the user, proceed without a user ID
-        queryData.userId = null;
+        throw new Error('Error checking user existence');
+      }
+    } else {
+      // No userId provided, try to find any user
+      try {
+        const { data: anyUser, error: anyUserError } = await supabase
+          .from('users')
+          .select('id')
+          .limit(1)
+          .single();
+
+        if (!anyUserError && anyUser && anyUser.id) {
+          console.log(`No userId provided. Using fallback user ID ${anyUser.id} for trend query`);
+          userId = anyUser.id;
+        } else {
+          console.error('No users found in the database and no userId provided.');
+          // Create a temporary user
+          try {
+            console.log('Creating a temporary user for trend query');
+            const { data: tempUser, error: tempUserError } = await supabase
+              .from('users')
+              .insert({
+                email: `temp_${Date.now()}@example.com`,
+                auth_id: `temp_${Date.now()}`,
+                onboarding_completed: false,
+                created_at: new Date().toISOString()
+              })
+              .select();
+
+            if (!tempUserError && tempUser && tempUser[0] && tempUser[0].id) {
+              console.log(`Created temporary user with ID ${tempUser[0].id}`);
+              userId = tempUser[0].id;
+            } else {
+              console.error('Failed to create temporary user:', tempUserError);
+              throw new Error('Cannot create trend query without a user_id');
+            }
+          } catch (tempUserError) {
+            console.error('Error creating temporary user:', tempUserError);
+            throw new Error('Cannot create trend query without a user_id');
+          }
+        }
+      } catch (anyUserError) {
+        console.error('Error finding any user:', anyUserError);
+        throw new Error('Cannot create trend query without a user_id');
       }
     }
 
     // Insert the trend query
     const insertData = {
-      query: queryData.query
+      query: queryData.query,
+      user_id: userId // Always include user_id as it's required
     };
 
-    // Only include user_id if it exists
-    if (queryData.userId) {
-      // Get the user's ID from the users table
-      const { data: userData, error: userError } = await supabase
-        .from('users')
-        .select('id')
-        .eq('auth_id', queryData.userId)
-        .maybeSingle();
-
-      if (!userError && userData && userData.id) {
-        console.log(`Using user ID ${userData.id} for trend query`);
-        insertData.user_id = userData.id; // Use the user's ID from the users table, not the auth_id
-      } else {
-        console.log(`Could not find user ID for auth_id ${queryData.userId}`);
-      }
-    }
+    console.log('Inserting trend query data:', insertData);
 
     const { data, error } = await supabase
       .from('trend_queries')

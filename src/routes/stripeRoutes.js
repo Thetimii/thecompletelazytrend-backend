@@ -45,9 +45,9 @@ router.post('/create-checkout-session', async (req, res) => {
   try {
     console.log('Create checkout session request received:', req.body);
 
-    const { priceId, userId, email, successUrl, cancelUrl, referral } = req.body;
+    const { priceId, userId, email, successUrl, cancelUrl } = req.body;
 
-    console.log('Request parameters:', { priceId, userId, email, successUrl, cancelUrl, referral });
+    console.log('Request parameters:', { priceId, userId, email, successUrl, cancelUrl });
     console.log('Stripe object:', typeof stripe, stripe ? 'available' : 'not available');
 
     if (!priceId) {
@@ -66,8 +66,8 @@ router.post('/create-checkout-session', async (req, res) => {
       const hasQueryParams = successUrl.includes('?');
       const successUrlWithSessionId = `${successUrl}${hasQueryParams ? '&' : '?'}session_id={CHECKOUT_SESSION_ID}`;
 
-      // Prepare checkout session parameters
-      const sessionParams = {
+      // Create the checkout session with minimal parameters and a 7-day free trial
+      const session = await stripe.checkout.sessions.create({
         payment_method_types: ['card'],
         line_items: [
           {
@@ -82,26 +82,11 @@ router.post('/create-checkout-session', async (req, res) => {
         success_url: successUrlWithSessionId,
         cancel_url: cancelUrl,
         customer_email: email,
-        customer_creation: 'always', // Required for Rewardful with one-time payments
+        client_reference_id: userId,
         metadata: {
           userId
         }
-      };
-
-      // If referral ID is provided, use it as the client_reference_id for Rewardful
-      // Otherwise, use the userId as before
-      if (referral) {
-        console.log('Using Rewardful referral ID as client_reference_id:', referral);
-        sessionParams.client_reference_id = referral;
-        // Also store the userId in metadata for our own reference
-        sessionParams.metadata.referralId = referral;
-      } else {
-        console.log('No Rewardful referral ID provided, using userId as client_reference_id');
-        sessionParams.client_reference_id = userId;
-      }
-
-      // Create the checkout session
-      const session = await stripe.checkout.sessions.create(sessionParams);
+      });
 
       console.log('Checkout session created successfully:', session.id);
 
@@ -297,18 +282,8 @@ router.post('/webhook', express.raw({ type: 'application/json' }), async (req, r
           subscription: session.subscription
         }, null, 2));
 
-        // Check if this is a Rewardful referral
-        const isRewardfulReferral = session.metadata?.referralId && session.client_reference_id === session.metadata.referralId;
-        if (isRewardfulReferral) {
-          console.log('Rewardful referral detected:', session.client_reference_id);
-          // Rewardful will automatically track this conversion using the client_reference_id
-        }
-
-        // Get the user ID from the session metadata
-        // If this is a Rewardful referral, the userId is in metadata.userId
-        // Otherwise, it might be in client_reference_id
-        const userId = session.metadata?.userId ||
-                      (!isRewardfulReferral ? session.client_reference_id : null);
+        // Get the user ID from the session metadata or client_reference_id
+        const userId = session.metadata?.userId || session.client_reference_id;
         console.log('Extracted userId:', userId);
 
         if (userId) {

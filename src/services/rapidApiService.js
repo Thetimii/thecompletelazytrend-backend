@@ -51,7 +51,7 @@ export const scrapeTikTokVideos = async (searchQueries, videosPerQuery = 5, user
         const searchResponse = await axios.get(TIKTOK_SEARCH_API_URL, {
           params: {
             keywords: query,
-            count: (videosPerQuery * 2).toString(), // Request more videos than needed to ensure we get enough valid ones
+            count: videosPerQuery.toString(), // Request exactly the number of videos we want to process
             cursor: '0',
             region: 'US',
             publish_time: '0',
@@ -74,7 +74,8 @@ export const scrapeTikTokVideos = async (searchQueries, videosPerQuery = 5, user
         const videos = searchResponse.data.data.videos;
         console.log(`Found ${videos.length} videos for query: ${query}`);
 
-        // Process each video from search results
+        // Process each video from search results - make sure we process all videos we receive
+        console.log(`Processing all ${Math.min(videos.length, videosPerQuery)} videos for query: ${query}`);
         for (let i = 0; i < Math.min(videos.length, videosPerQuery); i++) {
           const video = videos[i];
 

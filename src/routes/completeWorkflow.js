@@ -25,11 +25,12 @@ router.post('/', async (req, res) => {
     const searchQueries = await generateSearchQueries(businessDescription);
 
     // Step 2: Scrape TikTok videos
-    console.log('Step 2: Scraping TikTok videos...');
+    console.log(`Step 2: Scraping TikTok videos (${videosPerQuery} videos per query)...`);
     const videos = await scrapeTikTokVideos(searchQueries, videosPerQuery, userId);
+    console.log(`Successfully scraped ${videos.length} videos from ${searchQueries.length} queries`);
 
     // Step 3: Analyze videos
-    console.log('Step 3: Analyzing videos...');
+    console.log(`Step 3: Analyzing all ${videos.length} videos...`);
     const analyzedVideos = await analyzeVideos(videos, businessDescription);
 
     // Step 4: Reconstruct videos

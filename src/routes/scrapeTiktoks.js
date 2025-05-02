@@ -10,7 +10,7 @@ const router = express.Router();
  */
 router.post('/', async (req, res) => {
   try {
-    const { searchQueries, videosPerQuery = 3, userId } = req.body;
+    const { searchQueries, videosPerQuery = 5, userId } = req.body;
 
     if (!searchQueries || !Array.isArray(searchQueries) || searchQueries.length === 0) {
       return res.status(400).json({ message: 'Valid search queries array is required' });

@@ -14,7 +14,7 @@ const router = express.Router();
  */
 router.post('/', async (req, res) => {
   try {
-    const { businessDescription, userId, videosPerQuery = 3 } = req.body;
+    const { businessDescription, userId, videosPerQuery = 5 } = req.body;
 
     if (!businessDescription) {
       return res.status(400).json({ message: 'Business description is required' });

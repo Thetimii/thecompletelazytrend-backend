@@ -17,7 +17,7 @@ const TIKTOK_DOWNLOAD_API_URL = 'https://tiktok-download-video1.p.rapidapi.com/g
  * @param {string} userId - User ID to associate trend queries with
  * @returns {Promise<Object[]>} - Array of video data with Supabase URLs
  */
-export const scrapeTikTokVideos = async (searchQueries, videosPerQuery = 3, userId = null) => {
+export const scrapeTikTokVideos = async (searchQueries, videosPerQuery = 5, userId = null) => {
   try {
     const allVideos = [];
 
@@ -51,7 +51,7 @@ export const scrapeTikTokVideos = async (searchQueries, videosPerQuery = 3, user
         const searchResponse = await axios.get(TIKTOK_SEARCH_API_URL, {
           params: {
             keywords: query,
-            count: videosPerQuery.toString(),
+            count: (videosPerQuery * 2).toString(), // Request more videos than needed to ensure we get enough valid ones
             cursor: '0',
             region: 'US',
             publish_time: '0',

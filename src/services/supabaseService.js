@@ -112,9 +112,35 @@ export const saveTikTokVideo = async (videoData, trendQueryId) => {
       insertData.thumbnail_url = videoData.coverUrl;
     }
 
-    // Only include trend_query_id if it exists
+    // Handle trend_query_id - if not provided, create a default one
     if (trendQueryId) {
       insertData.trend_query_id = trendQueryId;
+    } else {
+      console.log('No trend_query_id provided, creating a default trend query');
+
+      // Create a default trend query
+      try {
+        const defaultQuery = {
+          query: videoData.caption ? `TikTok ${videoData.caption.split(' ').slice(0, 3).join(' ')}` : 'TikTok video'
+        };
+
+        // Use the userId from videoData if available
+        if (videoData.userId) {
+          defaultQuery.userId = videoData.userId;
+        }
+
+        const savedQuery = await saveTrendQuery(defaultQuery);
+
+        if (savedQuery && savedQuery.id) {
+          console.log(`Created default trend query with id: ${savedQuery.id}`);
+          insertData.trend_query_id = savedQuery.id;
+        } else {
+          throw new Error('Failed to create default trend query');
+        }
+      } catch (queryError) {
+        console.error(`Error creating default trend query: ${queryError.message}`);
+        throw new Error('Cannot save TikTok video without a valid trend_query_id');
+      }
     }
 
     console.log('Inserting video data:', insertData);
@@ -156,49 +182,85 @@ const extractHashtags = (caption) => {
  */
 export const saveTrendQuery = async (queryData) => {
   try {
-    // Check if userId exists in the users table
-    if (queryData.userId) {
-      try {
-        const { data: userData, error: userError } = await supabase
-          .from('users')
-          .select('id')
-          .eq('auth_id', queryData.userId)
-          .maybeSingle();
-
-        if (userError || !userData) {
-          console.log(`User with auth_id ${queryData.userId} not found in users table.`);
-          // Don't create temporary users, just set userId to null
-          queryData.userId = null;
-        }
-      } catch (userCheckError) {
-        console.error(`Error checking user existence: ${userCheckError.message}`);
-        // If there's an error checking the user, proceed without a user ID
-        queryData.userId = null;
-      }
-    }
-
     // Insert the trend query
     const insertData = {
       query: queryData.query
     };
 
-    // Only include user_id if it exists
+    // Check if userId exists and try to find the user
     if (queryData.userId) {
-      // Get the user's ID from the users table
-      const { data: userData, error: userError } = await supabase
-        .from('users')
-        .select('id')
-        .eq('auth_id', queryData.userId)
-        .maybeSingle();
+      try {
+        // Use the updated getUserProfile function that checks both auth_id and id
+        const userProfile = await getUserProfile(queryData.userId);
 
-      if (!userError && userData && userData.id) {
-        console.log(`Using user ID ${userData.id} for trend query`);
-        insertData.user_id = userData.id; // Use the user's ID from the users table, not the auth_id
-      } else {
-        console.log(`Could not find user ID for auth_id ${queryData.userId}`);
+        if (userProfile && userProfile.id) {
+          console.log(`Found user with id: ${userProfile.id} for userId: ${queryData.userId}`);
+          insertData.user_id = userProfile.id; // Use the user's ID from the users table
+        } else {
+          console.log(`No user found for userId: ${queryData.userId}`);
+
+          // Create a default user if none exists
+          console.log(`Creating a default user for trend query`);
+          const { data: newUser, error: createError } = await supabase
+            .from('users')
+            .insert({
+              auth_id: queryData.userId,
+              email: `temp_${queryData.userId}@example.com`,
+              created_at: new Date().toISOString(),
+              onboarding_completed: true
+            })
+            .select();
+
+          if (createError) {
+            console.error(`Error creating default user: ${createError.message}`);
+          } else if (newUser && newUser.length > 0) {
+            console.log(`Created default user with id: ${newUser[0].id}`);
+            insertData.user_id = newUser[0].id;
+          }
+        }
+      } catch (userError) {
+        console.error(`Error looking up user: ${userError.message}`);
       }
     }
 
+    // If we still don't have a user_id, we need to create a system user
+    if (!insertData.user_id) {
+      console.log(`No valid user_id found, creating a system user`);
+
+      // Check if system user already exists
+      const { data: systemUser, error: systemError } = await supabase
+        .from('users')
+        .select('id')
+        .eq('email', 'system@lazytrend.com')
+        .maybeSingle();
+
+      if (!systemError && systemUser) {
+        console.log(`Using existing system user with id: ${systemUser.id}`);
+        insertData.user_id = systemUser.id;
+      } else {
+        // Create a system user
+        const { data: newSystemUser, error: createSystemError } = await supabase
+          .from('users')
+          .insert({
+            email: 'system@lazytrend.com',
+            created_at: new Date().toISOString(),
+            onboarding_completed: true
+          })
+          .select();
+
+        if (createSystemError) {
+          console.error(`Error creating system user: ${createSystemError.message}`);
+          throw new Error(`Cannot save trend query without a valid user_id`);
+        } else if (newSystemUser && newSystemUser.length > 0) {
+          console.log(`Created system user with id: ${newSystemUser[0].id}`);
+          insertData.user_id = newSystemUser[0].id;
+        } else {
+          throw new Error(`Failed to create system user`);
+        }
+      }
+    }
+
+    // Now we should have a valid user_id, so insert the trend query
     const { data, error } = await supabase
       .from('trend_queries')
       .insert(insertData)
@@ -300,28 +362,93 @@ export const saveRecommendation = async (recommendationData) => {
     };
 
     // We must include a user_id as it's a NOT NULL column
-    // The userId we receive is actually the auth_id, so we need to look up the actual user_id
+    // The userId we receive could be either auth_id or regular id
     if (recommendationData.userId) {
       try {
-        console.log(`Looking up user with auth_id: ${recommendationData.userId}`);
+        console.log(`Looking up user with userId: ${recommendationData.userId}`);
+        // Use the updated getUserProfile function that checks both auth_id and id
         const userProfile = await getUserProfile(recommendationData.userId);
 
         if (userProfile && userProfile.id) {
-          // Use the actual user.id, not the auth_id
+          // Use the actual user.id
           insertData.user_id = userProfile.id;
-          console.log(`Found user with id: ${userProfile.id} for auth_id: ${recommendationData.userId}`);
+          console.log(`Found user with id: ${userProfile.id} for userId: ${recommendationData.userId}`);
         } else {
-          console.error(`No user found for auth_id: ${recommendationData.userId}. Cannot save recommendation without a valid user.`);
-          throw new Error(`No user found for auth_id: ${recommendationData.userId}`);
+          console.log(`No user found for userId: ${recommendationData.userId}, creating a default user`);
+
+          // Create a default user
+          const { data: newUser, error: createError } = await supabase
+            .from('users')
+            .insert({
+              auth_id: recommendationData.userId,
+              email: `temp_${recommendationData.userId}@example.com`,
+              created_at: new Date().toISOString(),
+              onboarding_completed: true
+            })
+            .select();
+
+          if (createError) {
+            console.error(`Error creating default user: ${createError.message}`);
+            throw new Error(`Failed to create default user: ${createError.message}`);
+          } else if (newUser && newUser.length > 0) {
+            console.log(`Created default user with id: ${newUser[0].id}`);
+            insertData.user_id = newUser[0].id;
+          } else {
+            throw new Error('Failed to create default user');
+          }
         }
       } catch (userError) {
-        console.error(`Error looking up user: ${userError.message}`);
-        throw new Error(`Error looking up user: ${userError.message}`);
+        console.error(`Error handling user: ${userError.message}`);
+
+        // Try to use system user as fallback
+        console.log(`Attempting to use system user as fallback`);
+        const { data: systemUser, error: systemError } = await supabase
+          .from('users')
+          .select('id')
+          .eq('email', 'system@lazytrend.com')
+          .maybeSingle();
+
+        if (!systemError && systemUser) {
+          console.log(`Using existing system user with id: ${systemUser.id}`);
+          insertData.user_id = systemUser.id;
+        } else {
+          throw new Error(`Cannot save recommendation without a valid user_id: ${userError.message}`);
+        }
       }
     } else {
-      // No userId provided, this is an error
-      console.error('No userId provided for recommendation. Cannot save recommendation without a valid user.');
-      throw new Error('No userId provided for recommendation');
+      // No userId provided, try to use system user
+      console.log(`No userId provided, attempting to use system user`);
+
+      const { data: systemUser, error: systemError } = await supabase
+        .from('users')
+        .select('id')
+        .eq('email', 'system@lazytrend.com')
+        .maybeSingle();
+
+      if (!systemError && systemUser) {
+        console.log(`Using existing system user with id: ${systemUser.id}`);
+        insertData.user_id = systemUser.id;
+      } else {
+        // Create a system user
+        const { data: newSystemUser, error: createSystemError } = await supabase
+          .from('users')
+          .insert({
+            email: 'system@lazytrend.com',
+            created_at: new Date().toISOString(),
+            onboarding_completed: true
+          })
+          .select();
+
+        if (createSystemError) {
+          console.error(`Error creating system user: ${createSystemError.message}`);
+          throw new Error(`Cannot save recommendation without a valid user_id`);
+        } else if (newSystemUser && newSystemUser.length > 0) {
+          console.log(`Created system user with id: ${newSystemUser[0].id}`);
+          insertData.user_id = newSystemUser[0].id;
+        } else {
+          throw new Error(`Failed to create system user`);
+        }
+      }
     }
 
     const { data, error } = await supabase
@@ -412,22 +539,38 @@ export const getRecommendationsByUserId = async (userId) => {
 
 /**
  * Get user profile by user ID
- * @param {string} userId - User ID
+ * @param {string} userId - User ID (can be auth_id or regular id)
  * @returns {Promise<Object>} - User profile
  */
 export const getUserProfile = async (userId) => {
   try {
-    const { data, error } = await supabase
+    // First try to find user by auth_id
+    const { data: authData, error: authError } = await supabase
       .from('users')
       .select('*')
       .eq('auth_id', userId)
       .maybeSingle();
 
-    if (error) {
-      throw new Error(`Error getting user profile: ${error.message}`);
+    if (!authError && authData) {
+      console.log(`Found user by auth_id: ${userId}`);
+      return authData;
     }
 
-    return data;
+    // If not found by auth_id, try by regular id
+    const { data: idData, error: idError } = await supabase
+      .from('users')
+      .select('*')
+      .eq('id', userId)
+      .maybeSingle();
+
+    if (!idError && idData) {
+      console.log(`Found user by regular id: ${userId}`);
+      return idData;
+    }
+
+    // If we get here, no user was found with either ID
+    console.log(`No user found with auth_id or id: ${userId}`);
+    return null;
   } catch (error) {
     console.error('Error getting user profile:', error);
     throw new Error('Failed to get user profile');

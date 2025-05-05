@@ -53,8 +53,8 @@ router.post('/create-checkout-session', async (req, res) => {
     console.log('Price ID from request:', priceId);
     console.log('Price ID from env:', process.env.STRIPE_PRICE_ID);
 
-    // Use the price ID from the request or fall back to the environment variable
-    const finalPriceId = priceId || process.env.STRIPE_PRICE_ID;
+    // Always use the new price ID regardless of what's in the request or environment
+    const finalPriceId = 'price_1RKJ9LG4vQYDStWYwbdkHlvJ';
 
     if (!finalPriceId) {
       console.log('Price ID is missing from both request and environment');

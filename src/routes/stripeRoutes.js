@@ -49,9 +49,15 @@ router.post('/create-checkout-session', async (req, res) => {
 
     console.log('Request parameters:', { priceId, userId, email, successUrl, cancelUrl });
     console.log('Stripe object:', typeof stripe, stripe ? 'available' : 'not available');
+    console.log('Stripe secret key last 4 chars:', process.env.STRIPE_SECRET_KEY ? process.env.STRIPE_SECRET_KEY.slice(-4) : 'not set');
+    console.log('Price ID from request:', priceId);
+    console.log('Price ID from env:', process.env.STRIPE_PRICE_ID);
 
-    if (!priceId) {
-      console.log('Price ID is missing');
+    // Use the price ID from the request or fall back to the environment variable
+    const finalPriceId = priceId || process.env.STRIPE_PRICE_ID;
+
+    if (!finalPriceId) {
+      console.log('Price ID is missing from both request and environment');
       return res.status(400).json({ message: 'Price ID is required' });
     }
 
@@ -66,12 +72,14 @@ router.post('/create-checkout-session', async (req, res) => {
       const hasQueryParams = successUrl.includes('?');
       const successUrlWithSessionId = `${successUrl}${hasQueryParams ? '&' : '?'}session_id={CHECKOUT_SESSION_ID}`;
 
+      console.log('Creating checkout session with price ID:', finalPriceId);
+
       // Create the checkout session with minimal parameters and a 7-day free trial
-      const session = await stripe.checkout.sessions.create({
+      const sessionParams = {
         payment_method_types: ['card'],
         line_items: [
           {
-            price: priceId,
+            price: finalPriceId,
             quantity: 1,
           },
         ],
@@ -81,12 +89,21 @@ router.post('/create-checkout-session', async (req, res) => {
         },
         success_url: successUrlWithSessionId,
         cancel_url: cancelUrl,
-        customer_email: email,
         client_reference_id: userId,
         metadata: {
           userId
         }
-      });
+      };
+
+      // Only add customer_email if it's provided
+      if (email) {
+        sessionParams.customer_email = email;
+      }
+
+      console.log('Session parameters:', JSON.stringify(sessionParams, null, 2));
+
+      // Create the checkout session
+      const session = await stripe.checkout.sessions.create(sessionParams);
 
       console.log('Checkout session created successfully:', session.id);
 
@@ -102,15 +119,23 @@ router.post('/create-checkout-session', async (req, res) => {
         return res.status(200).json({ url: 'https://example.com/mock-checkout' });
       }
 
+      // For development/testing, provide a fallback URL if Stripe is not properly configured
+      if (process.env.NODE_ENV === 'development') {
+        console.log('Development environment detected, returning mock URL');
+        return res.status(200).json({ url: 'https://example.com/mock-checkout' });
+      }
+
       return res.status(500).json({
         message: 'Failed to create checkout session',
-        error: sessionError.message
+        error: sessionError.message,
+        details: sessionError.stack
       });
     }
   } catch (error) {
     console.error('Error creating checkout session:', error);
     res.status(500).json({
-      message: error.message || 'Failed to create checkout session'
+      message: error.message || 'Failed to create checkout session',
+      details: error.stack
     });
   }
 });
@@ -127,6 +152,45 @@ router.get('/webhook-test', (req, res) => {
     message: 'Webhook endpoint is accessible',
     timestamp: new Date().toISOString(),
     headers: req.headers
+  });
+});
+
+/**
+ * @route GET /api/stripe-test
+ * @desc Test endpoint to verify Stripe configuration
+ * @access Public
+ */
+router.get('/stripe-test', (req, res) => {
+  console.log('Stripe test endpoint called');
+
+  // Check if Stripe is properly initialized
+  if (!stripe) {
+    return res.status(500).json({
+      success: false,
+      message: 'Stripe is not properly initialized',
+      stripeAvailable: false
+    });
+  }
+
+  // Check if we have a valid Stripe secret key
+  const stripeKeyLastFour = process.env.STRIPE_SECRET_KEY
+    ? `...${process.env.STRIPE_SECRET_KEY.slice(-4)}`
+    : 'not set';
+
+  // Check if we have a valid price ID
+  const priceId = process.env.STRIPE_PRICE_ID || 'not set';
+
+  res.json({
+    success: true,
+    message: 'Stripe configuration test',
+    timestamp: new Date().toISOString(),
+    stripeAvailable: true,
+    stripeKeyLastFour,
+    priceId,
+    stripeObject: typeof stripe,
+    mockStripe: typeof stripe.checkout.sessions.create === 'function' &&
+                stripe.checkout.sessions.create.toString().includes('mock'),
+    environment: process.env.NODE_ENV
   });
 });
 

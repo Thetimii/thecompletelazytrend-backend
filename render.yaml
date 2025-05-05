@@ -31,3 +31,7 @@ services:
         sync: false
       - key: DASHSCOPE_API_KEY
         sync: false
+      - key: FEEDBACK_EMAIL
+        value: info@lazy-trends.com
+      - key: EMAIL_FROM
+        value: noreply@lazy-trends.com

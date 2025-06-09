@@ -151,7 +151,7 @@ export const reconstructVideos = async (analyzedVideos, businessDescription, use
     const response = await axios.post(
       OPENROUTER_API_URL,
       {
-        model: 'mistralai/mistral-small-24b-instruct-2501:free',
+        model: 'deepseek/deepseek-chat-v3-0324:free', // Changed model
         messages: [
           {
             role: 'user',

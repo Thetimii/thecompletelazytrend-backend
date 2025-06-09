@@ -5,10 +5,9 @@ import { uploadVideoToSupabase, saveTikTokVideo, saveTrendQuery } from './supaba
 dotenv.config();
 
 const RAPIDAPI_KEY = process.env.RAPIDAPI_KEY;
-// Using the TikTok Feed Search API endpoint from RapidAPI
-const TIKTOK_SEARCH_API_URL = 'https://tiktok-download-video1.p.rapidapi.com/feedSearch';
-// Using the TikTok Download Video API endpoint from RapidAPI
-const TIKTOK_DOWNLOAD_API_URL = 'https://tiktok-download-video1.p.rapidapi.com/getVideo';
+// Using the TikTok Feed Search API endpoint from RapidAPI (NEW)
+const TIKTOK_SEARCH_API_URL = 'https://tiktok-scraper7.p.rapidapi.com/feed/search';
+// REMOVED: const TIKTOK_DOWNLOAD_API_URL = 'https://tiktok-download-video1.p.rapidapi.com/getVideo';
 
 /**
  * Scrape TikTok videos based on search queries
@@ -59,18 +58,21 @@ export const scrapeTikTokVideos = async (searchQueries, videosPerQuery = 5, user
           },
           headers: {
             'X-RapidAPI-Key': RAPIDAPI_KEY,
-            'X-RapidAPI-Host': 'tiktok-download-video1.p.rapidapi.com'
+            'X-RapidAPI-Host': 'tiktok-scraper7.p.rapidapi.com' // NEW HOST
           }
         });
 
         // console.log('Search API response for query "${query}":', JSON.stringify(searchResponse.data, null, 2));
+
+        // IMPORTANT: The entire response parsing logic below this line will need to be adapted
+        // to the new API's response structure.
 
         if (!searchResponse.data || searchResponse.data.code !== 0 || !searchResponse.data.data || !searchResponse.data.data.videos) {
           console.warn(`No search results or error for query: "${query}". API Response Code: ${searchResponse.data?.code}, Message: ${searchResponse.data?.msg}`);
           if (searchResponse.data && searchResponse.data.data && !searchResponse.data.data.videos) {
             console.warn('API returned data object, but videos array is missing or empty.');
           }
-          continue; // Skip to the next query if no videos or API error
+          continue;
         }
 
         const videosFromApi = searchResponse.data.data.videos;
@@ -84,8 +86,10 @@ export const scrapeTikTokVideos = async (searchQueries, videosPerQuery = 5, user
           const video = videosToProcess[i];
           // console.log(`Video ${i} raw data for query "${query}":`, JSON.stringify(video, null, 2));
 
-          if (!video || !video.video_id) {
-            console.warn(`Invalid video data at index ${i} for query "${query}". Missing video_id.`);
+          // Use video.video_id or video.aweme_id, ensure it's the correct one for URL construction
+          // The new API provides video_id, which is typically used in TikTok URLs.
+          if (!video || !video.video_id || !video.author?.unique_id) {
+            console.warn(`Invalid video data at index ${i} for query "${query}". Missing video_id or author.unique_id. Video data:`, video);
             continue;
           }
 
@@ -93,26 +97,11 @@ export const scrapeTikTokVideos = async (searchQueries, videosPerQuery = 5, user
             const videoUrl = `https://www.tiktok.com/@${video.author.unique_id}/video/${video.video_id}`;
             console.log(`Processing video URL: ${videoUrl}`);
 
-            // Call the TikTok Download Video API
-            const downloadResponse = await axios.get(TIKTOK_DOWNLOAD_API_URL, {
-              params: { url: videoUrl },
-              headers: {
-                'X-RapidAPI-Key': RAPIDAPI_KEY,
-                'X-RapidAPI-Host': 'tiktok-download-video1.p.rapidapi.com'
-              }
-            });
-
-            if (!downloadResponse.data || downloadResponse.data.code !== 0 || !downloadResponse.data.data) {
-              console.warn(`No download data or error for video: ${videoUrl}. API Response Code: ${downloadResponse.data?.code}, Message: ${downloadResponse.data?.msg}`);
-              continue;
-            }
-
-            const downloadData = downloadResponse.data.data;
-            // Prefer hdplay, then play, then wmplay (watermarked)
-            const videoDownloadUrl = downloadData.hdplay || downloadData.play || downloadData.wmplay;
+            // Get download URL directly from the search result
+            const videoDownloadUrl = video.play || video.wmplay; // Prefer non-watermarked
 
             if (!videoDownloadUrl) {
-              console.warn(`No video download URL found for: ${videoUrl}. Available download data keys: ${Object.keys(downloadData)}`);
+              console.warn(`No video download URL (play or wmplay) found for: ${videoUrl}. Video data:`, video);
               continue;
             }
 
@@ -146,18 +135,18 @@ export const scrapeTikTokVideos = async (searchQueries, videosPerQuery = 5, user
             const processedVideo = {
               id: videoIdForSupabase,
               author: video.author?.unique_id || 'Unknown Author',
-              title: downloadData.title || video.title || query,
-              description: downloadData.title || video.title || query, // Consider using downloadData.desc if available
+              title: video.title || query,
+              description: video.title || query, 
               likes: video.digg_count || 0,
               comments: video.comment_count || 0,
               shares: video.share_count || 0,
               views: video.play_count || 0,
               originalUrl: videoUrl,
               supabaseUrl: supabaseUrl,
-              coverUrl: downloadData.origin_cover || downloadData.cover || video.cover || '',
+              coverUrl: video.cover || video.origin_cover || video.ai_dynamic_cover || '',
               searchQuery: query,
-              duration: downloadData.duration || video.duration || 0,
-              musicTitle: downloadData.music_info?.title || video.music_info?.title || 'N/A'
+              duration: video.duration || 0,
+              musicTitle: video.music_info?.title || 'N/A'
             };
 
             try {

@@ -31,17 +31,17 @@ export const generateSearchQueries = async (businessDescription) => {
                 Generate 5 specific search queries that I can use to find relevant trending TikTok videos.
 
                 The queries should:
-                1. Be specific enough to find relevant content
-                2. Target trending topics or hashtags
-                3. Be diverse to cover different aspects of the business
-                4. Be formatted as a simple array of strings
-                5. only 1-2 words max 
-                6. use the most up to date trends
-                7. dont be broad be very specific
-                8. dont use hashtags
+                1. Be specific enough to find relevant content.
+                2. Target trending topics or hashtags.
+                3. Be diverse to cover different aspects of the business.
+                4. Be 1-2 words maximum per query.
+                5. Use the most up-to-date trends.
+                6. Be very specific, not broad.
+                7. Not use hashtags in the query itself.
 
-                Format your response as a JSON array of strings like this:
-                ["query 1", "query 2", "query 3", "query 4", "query 5"]`
+                IMPORTANT: Your response MUST be ONLY a valid JSON array of 5 strings, like this:
+                ["query 1", "query 2", "query 3", "query 4", "query 5"]
+                Do not include any other text, explanations, or markdown formatting like \`\`\`json or \`\`\` around the array.`
               }
             ]
           }
@@ -59,48 +59,57 @@ export const generateSearchQueries = async (businessDescription) => {
 
     // Extract the generated queries from the response
     const content = response.data.choices[0].message.content;
+    console.log('Raw OpenRouter Response for Queries:', JSON.stringify(content)); // Added logging
 
     // Parse the JSON array from the content
     try {
-      console.log('Raw content from OpenRouter:', content);
+      console.log('Attempting to parse raw content from OpenRouter as JSON:', content);
 
-      // Try to extract JSON array using regex
-      const arrayMatch = content.match(/\[\s*"[^"]*"(?:\s*,\s*"[^"]*")*\s*\]/);
-      if (arrayMatch) {
+      // Try to extract JSON array using regex - more robust for potential leading/trailing text
+      const arrayMatch = content.match(/\\[\\s*\"[^\"]*\"(?:\\s*,\\s*\"[^\"]*\")*\\s*\\]/);
+      if (arrayMatch && arrayMatch[0]) {
         console.log('Found JSON array using regex:', arrayMatch[0]);
-        return JSON.parse(arrayMatch[0]);
+        const parsedQueries = JSON.parse(arrayMatch[0]);
+        if (Array.isArray(parsedQueries) && parsedQueries.length > 0) {
+          return parsedQueries;
+        }
       }
 
-      // If no match found, try parsing the entire content
+      // If regex fails, try parsing the entire content directly (in case it's a perfect JSON string)
       try {
         const queries = JSON.parse(content);
-        console.log('Parsed entire content as JSON:', queries);
-        return queries;
-      } catch (parseError) {
-        console.error('Error parsing entire content as JSON:', parseError);
+        if (Array.isArray(queries) && queries.length > 0) {
+          console.log('Parsed entire content as JSON successfully:', queries);
+          return queries;
+        }
+      } catch (directParseError) {
+        console.warn('Direct parsing of entire content as JSON failed:', directParseError.message);
       }
 
-      // If JSON parsing fails, extract queries manually
-      console.log('Attempting to extract queries manually');
-      const queryMatches = content.match(/"([^"]*)"/g);
+      // If JSON parsing fails, attempt to extract queries manually from common non-JSON formats
+      console.log('Attempting to extract queries manually due to parsing failures.');
+      // Example: "query 1", "query 2", ...
+      let queryMatches = content.match(/"([^"]+)"/g);
       if (queryMatches && queryMatches.length > 0) {
-        const extractedQueries = queryMatches.map(q => q.replace(/"/g, ''));
-        console.log('Extracted queries manually:', extractedQueries);
-        return extractedQueries;
+        const extractedQueries = queryMatches.map(q => q.replace(/"/g, '').trim()).filter(q => q.length > 0);
+        if (extractedQueries.length > 0) {
+          console.log('Extracted queries manually (from quoted strings):', extractedQueries);
+          return extractedQueries.slice(0, 5); // Return up to 5
+        }
       }
 
-      // If we can't extract quotes, try to split by lines and clean up
-      const lines = content.split('\n')
-        .map(line => line.trim())
-        .filter(line => line.length > 0 && !line.startsWith('```') && !line.startsWith('[') && !line.startsWith(']'));
+      // Example: - query 1\n- query 2
+      const lines = content.split('\\n')
+        .map(line => line.replace(/^[-*•\d.]\s*/, '').trim()) // Remove list markers
+        .filter(line => line.length > 0 && !line.toLowerCase().includes('json') && !line.startsWith('[') && !line.endsWith(']'));
 
       if (lines.length > 0) {
-        console.log('Extracted queries by lines:', lines);
+        console.log('Extracted queries by splitting lines and cleaning:', lines);
         return lines.slice(0, 5); // Take up to 5 lines
       }
 
-      // Last resort: return a default query
-      console.log('Using default query');
+      // Last resort: return a default query based on business description
+      console.warn('All parsing attempts failed. Using default query for:', businessDescription);
       return [`trending ${businessDescription} tiktok`];
     } catch (error) {
       console.error('Error parsing JSON response:', error);

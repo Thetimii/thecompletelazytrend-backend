@@ -133,43 +133,45 @@ export const scrapeTikTokVideos = async (searchQueries, videosPerQuery = 5, user
             }
 
             const processedVideo = {
-              id: videoIdForSupabase,
+              // id: videoIdForSupabase, // This is an internal ID for the allVideos array, not for DB
               author: video.author?.unique_id || 'Unknown Author',
               title: video.title || query,
-              description: video.title || query, 
+              description: video.title || query, // Used for caption and hashtags extraction
               likes: video.digg_count || 0,
-              comments: video.comment_count || 0,
+              comments: video.comment_count || 0, // Not in DB schema shown, but good to have
               shares: video.share_count || 0,
               views: video.play_count || 0,
-              originalUrl: videoUrl,
-              supabaseUrl: supabaseUrl,
-              coverUrl: video.cover || video.origin_cover || video.ai_dynamic_cover || '',
-              searchQuery: query,
+              originalUrl: videoUrl, // This will be mapped to video_url in supabaseService
+              supabaseUrl: supabaseUrl, // This will be mapped to download_url in supabaseService
+              coverUrl: video.cover || video.origin_cover || video.ai_dynamic_cover || '', // Mapped to thumbnail_url
+              searchQuery: query, // Used for context, not directly saved unless part of title/caption
               duration: video.duration || 0,
-              musicTitle: video.music_info?.title || 'N/A'
+              musicTitle: video.music_info?.title || 'N/A',
+              downloadCount: video.download_count || 0 // From API, will be mapped to 'downloads' in DB
             };
 
             try {
-              const videoMetadata = {
-                userId,
+              // Prepare the object for saveTikTokVideo, aligning with supabaseService.js expectations
+              const videoMetadataToSave = {
+                userId, // Passed for associating trend_query_id
                 title: processedVideo.title,
                 author: processedVideo.author,
                 likes: processedVideo.likes,
-                comments: processedVideo.comments,
                 shares: processedVideo.shares,
                 views: processedVideo.views,
-                video_url: processedVideo.originalUrl,
-                download_url: processedVideo.supabaseUrl,
+                video_url: processedVideo.originalUrl, // Original TikTok URL
+                videoUrl: processedVideo.supabaseUrl, // Supabase storage URL (mapped to 'videoUrl' column)
                 thumbnail_url: processedVideo.coverUrl,
-                caption: processedVideo.description,
+                caption: processedVideo.description, // Or a more specific caption field if available
                 duration: processedVideo.duration,
                 music_title: processedVideo.musicTitle,
-                trend_query_id: trendQueryId // This will be null if userId was not provided initially
+                downloads: processedVideo.downloadCount, // Mapping API's download_count to DB's downloads
+                // trend_query_id is handled by saveTikTokVideo based on the passed trendQueryId or userId
               };
               
-              // console.log(`Video metadata prepared for DB:`, JSON.stringify(videoMetadata, null, 2));
+              // console.log(`Video metadata prepared for DB:`, JSON.stringify(videoMetadataToSave, null, 2));
 
-              const savedVideo = await saveTikTokVideo(videoMetadata, trendQueryId); // Pass trendQueryId explicitly
+              const savedVideo = await saveTikTokVideo(videoMetadataToSave, trendQueryId); // Pass trendQueryId explicitly
               console.log(`Saved TikTok video to database: ${savedVideo.id}`);
               processedVideo.dbId = savedVideo.id;
               allVideos.push(processedVideo);

@@ -100,7 +100,7 @@ export const saveTikTokVideo = async (videoData, trendQueryId) => {
       music_title: videoData.music_title,
       thumbnail_url: videoData.thumbnail_url || videoData.coverUrl,
       // Supabase storage URL for the video file itself
-      download_url: videoData.download_url // This should be the supabaseUrl passed in videoData
+      videoUrl: videoData.videoUrl // This should be the supabaseUrl passed in videoData, now mapped to 'videoUrl'
     };
 
     // Ensure trend_query_id is handled correctly

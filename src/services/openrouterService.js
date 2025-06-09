@@ -148,6 +148,17 @@ export const reconstructVideos = async (analyzedVideos, businessDescription, use
   try {
     let strategy;
 
+    // Create a leaner version of analyzedVideos to reduce memory footprint
+    const leanAnalyzedVideos = analyzedVideos.map(video => {
+      // Transferring search query, URL/ID, title, and description (as "what happened")
+      return {
+        searchQuery: video.searchQuery,
+        url: video.url || video.id || video.dbId,
+        title: video.title,
+        description: video.description 
+      };
+    });
+
     const response = await axios.post(
       OPENROUTER_API_URL,
       {
@@ -158,7 +169,7 @@ export const reconstructVideos = async (analyzedVideos, businessDescription, use
             content: [
               {
                 type: "text",
-                text: `I have analyzed ${analyzedVideos.length} TikTok videos for a ${businessDescription} business. Here is the analysis data: ${JSON.stringify(analyzedVideos)}.
+                text: `I have analyzed ${leanAnalyzedVideos.length} TikTok videos for a ${businessDescription} business. Here is the summarized analysis data: ${JSON.stringify(leanAnalyzedVideos)}.
 
                 Based on this data, create a comprehensive TikTok marketing strategy for this business. Include:
                 1. Overall strategy summary
@@ -277,6 +288,17 @@ export const summarizeTrends = async (videoAnalyses, businessDescription, userId
   try {
     console.log(`Summarizing trends for ${videoAnalyses.length} videos...`);
 
+    // Create a leaner version of videoAnalyses to reduce memory footprint
+    const leanVideoAnalyses = videoAnalyses.map(video => {
+      // Transferring search query, URL/ID, title, and description (as "what happened")
+      return {
+        searchQuery: video.searchQuery,
+        url: video.url || video.id || video.dbId,
+        title: video.title,
+        description: video.description 
+      };
+    });
+
     const response = await axios.post(
       OPENROUTER_API_URL,
       {
@@ -287,7 +309,7 @@ export const summarizeTrends = async (videoAnalyses, businessDescription, userId
             content: [
               {
                 type: "text",
-                text: `I have analyzed ${videoAnalyses.length} TikTok videos for a ${businessDescription} business. Here is the analysis data: ${JSON.stringify(videoAnalyses)}.
+                text: `I have analyzed ${leanVideoAnalyses.length} TikTok videos for a ${businessDescription} business. Here is the summarized analysis data: ${JSON.stringify(leanVideoAnalyses)}.
 
                 Based on this data, provide:
                 1. A clear summary of what's trending in these videos (common themes, styles, hooks)

@@ -82,68 +82,70 @@ export const uploadVideoToSupabase = async (videoBuffer, fileName) => {
  */
 export const saveTikTokVideo = async (videoData, trendQueryId) => {
   try {
-    console.log(`Saving TikTok video with trend_query_id: ${trendQueryId}`);
+    // console.log(`Attempting to save TikTok video. Provided trendQueryId: ${trendQueryId}, videoData:`, JSON.stringify(videoData, null, 2));
 
-    // Prepare the video data for insertion
-    // Check the actual column names in the database
     const insertData = {
-      video_url: videoData.video_url || videoData.originalUrl || `https://www.tiktok.com/@${videoData.author || 'unknown'}/video/unknown`,
+      video_url: videoData.video_url || `https://www.tiktok.com/@${videoData.author || 'unknown'}/video/unknown`,
       caption: videoData.caption || videoData.description || '',
       views: videoData.views || 0,
       likes: videoData.likes || 0,
-      downloads: 0,
+      downloads: videoData.downloads || 0, // Assuming downloads might be tracked elsewhere or default to 0
       hashtags: extractHashtags(videoData.caption || videoData.description || ''),
-      created_at: new Date().toISOString()
+      created_at: new Date().toISOString(),
+      // Fields from videoData that map directly if they exist
+      author: videoData.author,
+      title: videoData.title,
+      shares: videoData.shares || 0,
+      duration: videoData.duration || 0,
+      music_title: videoData.music_title,
+      thumbnail_url: videoData.thumbnail_url || videoData.coverUrl,
+      // Supabase storage URL for the video file itself
+      download_url: videoData.download_url // This should be the supabaseUrl passed in videoData
     };
 
-    // Add videoUrl field (this might be the actual column name instead of download_url)
-    if (videoData.download_url || videoData.supabaseUrl) {
-      insertData.videoUrl = videoData.download_url || videoData.supabaseUrl;
-    }
-
-    // Log the fields for debugging
-    console.log(`Video URL: ${insertData.video_url}`);
-    console.log(`Video Storage URL: ${insertData.videoUrl || 'none'}`);
-
-    // Check if the thumbnail URL exists
-    if (videoData.thumbnail_url) {
-      insertData.thumbnail_url = videoData.thumbnail_url;
-    } else if (videoData.coverUrl) {
-      insertData.thumbnail_url = videoData.coverUrl;
-    }
-
-    // Handle trend_query_id - if not provided, create a default one
+    // Ensure trend_query_id is handled correctly
     if (trendQueryId) {
       insertData.trend_query_id = trendQueryId;
+      console.log(`Using provided trend_query_id: ${trendQueryId}`);
+    } else if (videoData.trend_query_id) {
+      // Fallback if trendQueryId param is null but it exists on videoData (e.g. from a retry)
+      insertData.trend_query_id = videoData.trend_query_id;
+      console.log(`Using trend_query_id from videoData: ${videoData.trend_query_id}`);
     } else {
-      console.log('No trend_query_id provided, creating a default trend query');
-
-      // Create a default trend query
-      try {
-        const defaultQuery = {
-          query: videoData.caption ? `TikTok ${videoData.caption.split(' ').slice(0, 3).join(' ')}` : 'TikTok video'
-        };
-
-        // Use the userId from videoData if available
-        if (videoData.userId) {
-          defaultQuery.userId = videoData.userId;
+      console.warn('No trend_query_id provided for saveTikTokVideo. This video will not be associated with a specific search query unless a user_id is available on videoData to create a default one.');
+      // Attempt to create/assign a default trend query if a user_id is available on videoData
+      // This logic is crucial if a video somehow needs saving without an explicit prior trend query ID.
+      if (videoData.userId) {
+        console.log(`Attempting to create/find default trend query for userId: ${videoData.userId} as no trend_query_id was passed.`);
+        try {
+          const defaultQueryText = videoData.title ? `Default query for: ${videoData.title}` : 'Default TikTok query';
+          const queryToSave = { userId: videoData.userId, query: defaultQueryText };
+          const savedDefaultQuery = await saveTrendQuery(queryToSave); // saveTrendQuery handles user lookup/creation
+          if (savedDefaultQuery && savedDefaultQuery.id) {
+            insertData.trend_query_id = savedDefaultQuery.id;
+            console.log(`Associated video with newly created/found default trend query ID: ${savedDefaultQuery.id}`);
+          } else {
+            console.error('Failed to create or find a default trend query. Video may not be linked correctly.');
+            // Depending on strictness, could throw error here
+          }
+        } catch (defaultQueryError) {
+          console.error(`Error creating/finding default trend query: ${defaultQueryError.message}. Video may not be linked.`);
         }
-
-        const savedQuery = await saveTrendQuery(defaultQuery);
-
-        if (savedQuery && savedQuery.id) {
-          console.log(`Created default trend query with id: ${savedQuery.id}`);
-          insertData.trend_query_id = savedQuery.id;
-        } else {
-          throw new Error('Failed to create default trend query');
-        }
-      } catch (queryError) {
-        console.error(`Error creating default trend query: ${queryError.message}`);
-        throw new Error('Cannot save TikTok video without a valid trend_query_id');
+      } else {
+        console.error('Cannot create a default trend query as no userId is available on videoData. Video will lack trend_query_id.');
+        // If trend_query_id is STRICTLY required by DB schema (NOT NULL), this insert will fail.
+        // If it's nullable, it will proceed without it.
       }
     }
+    
+    // Remove undefined fields to avoid issues with Supabase client
+    Object.keys(insertData).forEach(key => {
+        if (insertData[key] === undefined) {
+            delete insertData[key];
+        }
+    });
 
-    console.log('Inserting video data:', insertData);
+    console.log('Inserting video data into tiktok_videos table:', JSON.stringify(insertData, null, 2));
 
     const { data, error } = await supabase
       .from('tiktok_videos')
@@ -151,13 +153,21 @@ export const saveTikTokVideo = async (videoData, trendQueryId) => {
       .select();
 
     if (error) {
-      throw new Error(`Error saving TikTok video: ${error.message}`);
+      console.error('Supabase insert error details:', JSON.stringify(error, null, 2));
+      throw new Error(`Error saving TikTok video to database: ${error.message}. SQL Error: ${error.details}. Hint: ${error.hint}`);
     }
 
+    if (!data || data.length === 0) {
+        throw new Error('TikTok video data was not returned after insert. Insert may have failed silently.');
+    }
+
+    console.log(`Successfully saved TikTok video to database. DB ID: ${data[0].id}`);
     return data[0];
   } catch (error) {
-    console.error('Error saving TikTok video:', error);
-    throw new Error('Failed to save TikTok video');
+    console.error('Overall error in saveTikTokVideo function:', error.message);
+    // Log the videoData that caused the error for easier debugging, but be mindful of PII if any
+    // console.error('VideoData causing error:', JSON.stringify(videoData, null, 2));
+    throw error; // Re-throw the original error or a new one with more context
   }
 };
 

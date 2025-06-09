@@ -59,60 +59,75 @@ export const generateSearchQueries = async (businessDescription) => {
 
     // Extract the generated queries from the response
     const content = response.data.choices[0].message.content;
-    console.log('Raw OpenRouter Response for Queries:', JSON.stringify(content)); // Added logging
+    console.log('Raw OpenRouter Response for Queries:', JSON.stringify(content));
 
     // Parse the JSON array from the content
     try {
       console.log('Attempting to parse raw content from OpenRouter as JSON:', content);
 
       // Try to extract JSON array using regex - more robust for potential leading/trailing text
-      const arrayMatch = content.match(/\\[\\s*\"[^\"]*\"(?:\\s*,\\s*\"[^\"]*\")*\\s*\\]/);
+      const arrayMatch = content.match(/\\[\\s*\\"[^\\"]*\\"(?:\\s*,\\s*\\"[^\\"]*\\")*\\s*\\]/);
       if (arrayMatch && arrayMatch[0]) {
         console.log('Found JSON array using regex:', arrayMatch[0]);
-        const parsedQueries = JSON.parse(arrayMatch[0]);
-        if (Array.isArray(parsedQueries) && parsedQueries.length > 0) {
-          return parsedQueries;
+        try {
+            const parsedQueries = JSON.parse(arrayMatch[0]);
+            if (Array.isArray(parsedQueries) && parsedQueries.length === 5) {
+                console.log('Regex parsing yielded 5 queries:', parsedQueries);
+                return parsedQueries;
+            } else if (Array.isArray(parsedQueries) && parsedQueries.length > 0) {
+                console.warn(`Regex parsing yielded ${parsedQueries.length} queries, but 5 were expected. Will attempt other parsing methods.`);
+            }
+        } catch (e) {
+            console.warn('Regex matched content, but JSON.parse failed:', e.message);
         }
       }
 
-      // If regex fails, try parsing the entire content directly (in case it's a perfect JSON string)
+      // If regex fails or yields < 5, try parsing the entire content directly
       try {
         const queries = JSON.parse(content);
-        if (Array.isArray(queries) && queries.length > 0) {
-          console.log('Parsed entire content as JSON successfully:', queries);
+        if (Array.isArray(queries) && queries.length === 5) {
+          console.log('Parsed entire content as JSON successfully (5 queries):', queries);
           return queries;
+        } else if (Array.isArray(queries) && queries.length > 0) {
+            console.warn(`Direct JSON parsing yielded ${queries.length} queries, but 5 were expected. Will attempt manual extraction.`);
         }
       } catch (directParseError) {
-        console.warn('Direct parsing of entire content as JSON failed:', directParseError.message);
+        // Only log if arrayMatch also failed or didn't produce 5, to avoid redundant logs if regex worked partially
+        if (!(arrayMatch && arrayMatch[0])) {
+            console.warn('Direct parsing of entire content as JSON failed:', directParseError.message);
+        }
       }
 
-      // If JSON parsing fails, attempt to extract queries manually from common non-JSON formats
-      console.log('Attempting to extract queries manually due to parsing failures.');
-      // Example: "query 1", "query 2", ...
+      // If JSON parsing fails to yield 5, attempt to extract queries manually
+      console.log('JSON parsing did not yield 5 queries. Attempting to extract queries manually.');
+      
       let queryMatches = content.match(/"([^"]+)"/g);
       if (queryMatches && queryMatches.length > 0) {
         const extractedQueries = queryMatches.map(q => q.replace(/"/g, '').trim()).filter(q => q.length > 0);
-        if (extractedQueries.length > 0) {
-          console.log('Extracted queries manually (from quoted strings):', extractedQueries);
-          return extractedQueries.slice(0, 5); // Return up to 5
+        if (extractedQueries.length >= 5) {
+          console.log('Extracted 5 queries manually (from quoted strings):', extractedQueries.slice(0, 5));
+          return extractedQueries.slice(0, 5);
+        } else if (extractedQueries.length > 0) {
+            console.warn(`Manual extraction (quoted strings) yielded ${extractedQueries.length} queries, expected 5. Will try line splitting.`);
         }
       }
 
-      // Example: - query 1\n- query 2
       const lines = content.split('\\n')
-        .map(line => line.replace(/^[-*•\d.]\s*/, '').trim()) // Remove list markers
+        .map(line => line.replace(/^[-*•\\d.]\\s*/, '').trim()) // Remove list markers
         .filter(line => line.length > 0 && !line.toLowerCase().includes('json') && !line.startsWith('[') && !line.endsWith(']'));
 
-      if (lines.length > 0) {
-        console.log('Extracted queries by splitting lines and cleaning:', lines);
-        return lines.slice(0, 5); // Take up to 5 lines
+      if (lines.length >= 5) {
+        console.log('Extracted 5 queries by splitting lines and cleaning:', lines.slice(0, 5));
+        return lines.slice(0, 5);
+      } else if (lines.length > 0) {
+          console.warn(`Line splitting yielded ${lines.length} queries, expected 5. Falling back to default.`);
       }
 
-      // Last resort: return a default query based on business description
-      console.warn('All parsing attempts failed. Using default query for:', businessDescription);
+      // Last resort: return a default query
+      console.warn('All parsing attempts failed to yield 5 queries. Using default query for:', businessDescription);
       return [`trending ${businessDescription} tiktok`];
     } catch (error) {
-      console.error('Error parsing JSON response:', error);
+      console.error('Error parsing JSON response from OpenRouter:', error);
       // Last resort: return a default query
       return [`trending ${businessDescription} tiktok`];
     }

@@ -150,7 +150,6 @@ export const reconstructVideos = async (analyzedVideos, businessDescription, use
 
     // Create a leaner version of analyzedVideos to reduce memory footprint
     const leanAnalyzedVideos = analyzedVideos.map(video => {
-      // Transferring search query, URL/ID, title, and description (as "what happened")
       return {
         searchQuery: video.searchQuery,
         url: video.url || video.id || video.dbId,
@@ -162,7 +161,7 @@ export const reconstructVideos = async (analyzedVideos, businessDescription, use
     const response = await axios.post(
       OPENROUTER_API_URL,
       {
-        model: 'deepseek/deepseek-chat-v3-0324:free', // Changed model
+        model: 'deepseek/deepseek-chat-v3-0324:free',
         messages: [
           {
             role: 'user',
@@ -171,14 +170,18 @@ export const reconstructVideos = async (analyzedVideos, businessDescription, use
                 type: "text",
                 text: `I have analyzed ${leanAnalyzedVideos.length} TikTok videos for a ${businessDescription} business. Here is the summarized analysis data: ${JSON.stringify(leanAnalyzedVideos)}.
 
-                Based on this data, create a comprehensive TikTok marketing strategy for this business. Include:
-                1. Overall strategy summary
-                2. Content themes that work well
-                3. Specific video ideas 
-                4. Hashtag strategy
-                5. Posting frequency recommendations
+Based on this data, create a comprehensive TikTok marketing strategy. The output MUST be structured with the following clear section headings followed by content. Do not use JSON, provide plain text output.
 
-                Format your response as simple text with clear section headings, not as JSON.`
+Section Headings to Use:
+1.  **Observations from Analyzed Videos:** (Summarize what was seen in the provided video data - commonalities, surprising elements, etc.)
+2.  **Key Trend Takeaways:** (The core insights and key points derived from the analyzed videos.)
+3.  **Sample TikTok Script:** (A detailed, step-by-step script for one TikTok video, from beginning to end, tailored to the ${businessDescription} business. Include visual cues, voiceover/text overlay suggestions, and calls to action.)
+4.  **Technical Specifications for Sample Script:** (Include: Video Length, Music suggestion, Fonts/Text Styles, Pacing/Editing Style, Overall Vibe.)
+5.  **General Content Themes:** (Broader content themes that work well based on the analysis.)
+6.  **Hashtag Strategy:** (Recommended hashtags.)
+7.  **Posting Frequency:** (Suggestions on how often to post.)
+
+Ensure each section is clearly delineated by its heading.`
               }
             ]
           }
@@ -194,49 +197,62 @@ export const reconstructVideos = async (analyzedVideos, businessDescription, use
       }
     );
 
-    // Extract the generated strategy from the response
     const content = response.data.choices[0].message.content;
 
-    // Create a structured object from the text content
+    // Initialize strategy object with new fields
     strategy = {
-      strategySummary: content,
-      contentThemes: [],
-      videoIdeas: [],
+      observations: "",
+      keyTakeaways: "",
+      sampleScript: "",
+      technicalSpecifications: "",
+      contentThemes: [], // Keep as array for multiple themes
       hashtagStrategy: "",
       postingFrequency: "",
       rawContent: content // Store the raw content as well
     };
 
-    // Try to extract sections from the text
-    const strategySummaryMatch = content.match(/Overall strategy summary:?([\s\S]*?)(?:Content themes|$)/i);
-    if (strategySummaryMatch && strategySummaryMatch[1]) {
-      strategy.strategySummary = strategySummaryMatch[1].trim();
+    // Try to extract sections from the text using the new headings
+    const observationsMatch = content.match(/Observations from Analyzed Videos:?([\s\S]*?)(?:Key Trend Takeaways:?|$)/i);
+    if (observationsMatch && observationsMatch[1]) {
+      strategy.observations = observationsMatch[1].trim();
     }
 
-    const contentThemesMatch = content.match(/Content themes:?([\s\S]*?)(?:Specific video ideas|$)/i);
+    const keyTakeawaysMatch = content.match(/Key Trend Takeaways:?([\s\S]*?)(?:Sample TikTok Script:?|$)/i);
+    if (keyTakeawaysMatch && keyTakeawaysMatch[1]) {
+      strategy.keyTakeaways = keyTakeawaysMatch[1].trim();
+    }
+
+    const sampleScriptMatch = content.match(/Sample TikTok Script:?([\s\S]*?)(?:Technical Specifications for Sample Script:?|$)/i);
+    if (sampleScriptMatch && sampleScriptMatch[1]) {
+      strategy.sampleScript = sampleScriptMatch[1].trim();
+    }
+
+    const techSpecsMatch = content.match(/Technical Specifications for Sample Script:?([\s\S]*?)(?:General Content Themes:?|$)/i);
+    if (techSpecsMatch && techSpecsMatch[1]) {
+      strategy.technicalSpecifications = techSpecsMatch[1].trim();
+    }
+
+    const contentThemesMatch = content.match(/General Content Themes:?([\s\S]*?)(?:Hashtag Strategy:?|$)/i);
     if (contentThemesMatch && contentThemesMatch[1]) {
       strategy.contentThemes = contentThemesMatch[1]
-        .split(/\n/)
-        .map(line => line.replace(/^[-*•]\s*/, '').trim())
-        .filter(line => line.length > 0);
-    }
-
-    const videoIdeasMatch = content.match(/Specific video ideas:?([\s\S]*?)(?:Hashtag strategy|$)/i);
-    if (videoIdeasMatch && videoIdeasMatch[1]) {
-      strategy.videoIdeas = videoIdeasMatch[1]
         .split(/\n/)
         .map(line => line.replace(/^[-*•\d.]\s*/, '').trim())
         .filter(line => line.length > 0);
     }
 
-    const hashtagStrategyMatch = content.match(/Hashtag strategy:?([\s\S]*?)(?:Posting frequency|$)/i);
+    const hashtagStrategyMatch = content.match(/Hashtag Strategy:?([\s\S]*?)(?:Posting Frequency:?|$)/i);
     if (hashtagStrategyMatch && hashtagStrategyMatch[1]) {
       strategy.hashtagStrategy = hashtagStrategyMatch[1].trim();
     }
 
-    const postingFrequencyMatch = content.match(/Posting frequency:?([\s\S]*?)$/i);
+    const postingFrequencyMatch = content.match(/Posting Frequency:?([\s\S]*?)$/i);
     if (postingFrequencyMatch && postingFrequencyMatch[1]) {
       strategy.postingFrequency = postingFrequencyMatch[1].trim();
+    }
+
+    // Fallback for overall strategy if specific sections aren't parsed well
+    if (!strategy.observations && !strategy.keyTakeaways && !strategy.sampleScript) {
+        strategy.observations = content; // Put all content in observations if parsing fails
     }
 
     // Save recommendation to database if userId is provided

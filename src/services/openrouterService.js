@@ -28,19 +28,17 @@ export const generateSearchQueries = async (businessDescription) => {
                 type: "text",
                 text: `I need to find trending TikTok videos related to a ${businessDescription} business.
 
-                Generate 5 specific search queries that I can use to find relevant trending TikTok videos.
+                Generate 1 simple search query that I can use to find relevant trending TikTok videos.
 
-                The queries should:
-                1. Be specific enough to find relevant content.
-                2. Target trending topics or hashtags.
-                3. Be diverse to cover different aspects of the business.
-                4. Be 1-2 words maximum per query.
-                5. Use the most up-to-date trends.
-                6. Be very specific, not broad.
-                7. Not use hashtags in the query itself.
+                The query should:
+                1. Be simple and broad enough to find trending content.
+                2. Be just 1 word if possible, maximum 2 words.
+                3. Use general terms that are likely to have trending videos.
+                4. Not be too specific or niche.
+                5. Not use hashtags in the query itself.
 
-                IMPORTANT: Your response MUST be ONLY a valid JSON array of 5 strings, like this:
-                ["query 1", "query 2", "query 3", "query 4", "query 5"]
+                IMPORTANT: Your response MUST be ONLY a valid JSON array with 1 string, like this:
+                ["query"]
                 Do not include any other text, explanations, or markdown formatting like \`\`\`json or \`\`\` around the array.`
               }
             ]

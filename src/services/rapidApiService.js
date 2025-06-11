@@ -57,7 +57,7 @@ export const scrapeTikTokVideos = async (searchQueries, videosPerQuery = 5, user
         console.log(`Searching TikTok for: "${query}" with sorting: ${sorting}, days: ${days}, location: ${videosLocation || 'worldwide'}`);
         
         const searchParams = {
-          take: videosPerQuery.toString(),
+          take: '1', // Only fetch 1 video for testing
           sorting: sorting,
           search: query,
           days: days.toString(),

@@ -10,7 +10,7 @@ const router = express.Router();
  */
 router.post('/', async (req, res) => {
   try {
-    const { searchQueries, videosPerQuery = 5, userId } = req.body;
+    const { searchQueries, videosPerQuery = 5, userId, customParams = {} } = req.body;
 
     if (!searchQueries || !Array.isArray(searchQueries) || searchQueries.length === 0) {
       return res.status(400).json({ message: 'Valid search queries array is required' });
@@ -19,7 +19,7 @@ router.post('/', async (req, res) => {
     // Limit the number of queries to prevent abuse
     const limitedQueries = searchQueries.slice(0, 5);
 
-    const videos = await scrapeTikTokVideos(limitedQueries, videosPerQuery, userId);
+    const videos = await scrapeTikTokVideos(limitedQueries, videosPerQuery, userId, customParams);
 
     res.json({
       success: true,
@@ -27,6 +27,7 @@ router.post('/', async (req, res) => {
         searchQueries: limitedQueries,
         videosCount: videos.length,
         userId: userId,
+        customParams,
         videos
       }
     });

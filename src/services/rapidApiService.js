@@ -5,18 +5,19 @@ import { uploadVideoToSupabase, saveTikTokVideo, saveTrendQuery } from './supaba
 dotenv.config();
 
 const RAPIDAPI_KEY = process.env.RAPIDAPI_KEY;
-// Using the TikTok Feed Search API endpoint from RapidAPI (NEW)
-const TIKTOK_SEARCH_API_URL = 'https://tiktok-scraper7.p.rapidapi.com/feed/search';
-// REMOVED: const TIKTOK_DOWNLOAD_API_URL = 'https://tiktok-download-video1.p.rapidapi.com/getVideo';
+// Using the TikTok Most Trending and Viral Content API endpoint from RapidAPI (NEW)
+const TIKTOK_TRENDING_API_URL = 'https://tiktok-most-trending-and-viral-content.p.rapidapi.com/video';
+const RAPIDAPI_HOST = 'tiktok-most-trending-and-viral-content.p.rapidapi.com';
 
 /**
- * Scrape TikTok videos based on search queries
+ * Scrape TikTok videos based on search queries using the new trending API
  * @param {string[]} searchQueries - Array of search queries
- * @param {number} videosPerQuery - Number of videos to fetch per query
+ * @param {number} videosPerQuery - Number of videos to fetch per query (default: 5)
  * @param {string} userId - User ID to associate trend queries with
+ * @param {Object} customParams - Custom search parameters (sorting, days, videosLocation)
  * @returns {Promise<Object[]>} - Array of video data with Supabase URLs
  */
-export const scrapeTikTokVideos = async (searchQueries, videosPerQuery = 5, userId = null) => {
+export const scrapeTikTokVideos = async (searchQueries, videosPerQuery = 5, userId = null, customParams = {}) => {
   try {
     const allVideos = [];
     let totalScrapedVideos = 0; // Keep track of total videos scraped across all queries
@@ -45,126 +46,86 @@ export const scrapeTikTokVideos = async (searchQueries, videosPerQuery = 5, user
       }
 
       try {
-        // Search for TikTok videos using the Feed Search API
-        console.log(`Searching TikTok for: "${query}" with count: ${videosPerQuery} (last 24 hours only)`);
-        const searchResponse = await axios.get(TIKTOK_SEARCH_API_URL, {
-          params: {
-            keywords: query,
-            count: videosPerQuery.toString(), // Request exactly the number of videos we want to process
-            cursor: '0',
-            region: 'US',
-            publish_time: '1', // 1 = Last 24 hours, 0 = All time, 7 = Last 7 days, 30 = Last 30 days
-            sort_type: '1' // 0 for relevance, 1 for latest (better for getting recent videos)
-          },
+        // Extract custom parameters with defaults
+        const {
+          sorting = 'rise', // 'rise' or 'rate'
+          days = 7, // 1, 7, or 30
+          videosLocation = null // country code like 'CH', 'US', etc.
+        } = customParams;
+
+        // Search for TikTok videos using the new Trending API
+        console.log(`Searching TikTok for: "${query}" with sorting: ${sorting}, days: ${days}, location: ${videosLocation || 'worldwide'}`);
+        
+        const searchParams = {
+          take: videosPerQuery.toString(),
+          sorting: sorting,
+          search: query,
+          days: days.toString(),
+          order: 'desc'
+        };
+
+        // Add location filter if specified
+        if (videosLocation && videosLocation.trim() !== '') {
+          searchParams.videosLocation = videosLocation;
+        }
+
+        const searchResponse = await axios.get(TIKTOK_TRENDING_API_URL, {
+          params: searchParams,
           headers: {
             'X-RapidAPI-Key': RAPIDAPI_KEY,
-            'X-RapidAPI-Host': 'tiktok-scraper7.p.rapidapi.com' // NEW HOST
+            'X-RapidAPI-Host': RAPIDAPI_HOST
           }
         });
 
         // console.log('Search API response for query "${query}":', JSON.stringify(searchResponse.data, null, 2));
 
-        // IMPORTANT: The entire response parsing logic below this line will need to be adapted
-        // to the new API's response structure.
-
-        if (!searchResponse.data || searchResponse.data.code !== 0 || !searchResponse.data.data || !searchResponse.data.data.videos) {
-          console.warn(`No search results or error for query: "${query}". API Response Code: ${searchResponse.data?.code}, Message: ${searchResponse.data?.msg}`);
-          if (searchResponse.data && searchResponse.data.data && !searchResponse.data.data.videos) {
-            console.warn('API returned data object, but videos array is missing or empty.');
-          }
+        // Parse the new API response structure
+        if (!searchResponse.data || !searchResponse.data.data || !searchResponse.data.data.stats || !Array.isArray(searchResponse.data.data.stats)) {
+          console.warn(`No search results or error for query: "${query}". API Response:`, searchResponse.data);
           continue;
         }
 
-        const videosFromApi = searchResponse.data.data.videos;
-        console.log(`Found ${videosFromApi.length} videos from API for query: "${query}" (last 24 hours, requested ${videosPerQuery})`);
+        const videosFromApi = searchResponse.data.data.stats;
+        console.log(`Found ${videosFromApi.length} videos from API for query: "${query}" (sorting: ${sorting}, days: ${days})`);
 
         // Process up to videosPerQuery videos from search results
         const videosToProcess = videosFromApi.slice(0, videosPerQuery);
-        console.log(`Attempting to process ${videosToProcess.length} recent videos for query: "${query}"`);
+        console.log(`Attempting to process ${videosToProcess.length} trending videos for query: "${query}"`);
 
         for (let i = 0; i < videosToProcess.length; i++) {
           const video = videosToProcess[i];
           // console.log(`Video ${i} raw data for query "${query}":`, JSON.stringify(video, null, 2));
 
-          // Use video.video_id or video.aweme_id, ensure it's the correct one for URL construction
-          // The new API provides video_id, which is typically used in TikTok URLs.
-          if (!video || !video.video_id || !video.author?.unique_id) {
-            console.warn(`Invalid video data at index ${i} for query "${query}". Missing video_id or author.unique_id. Video data:`, video);
+          // Validate required video data from new API format
+          if (!video || !video.videoId || !video.authorName) {
+            console.warn(`Invalid video data at index ${i} for query "${query}". Missing videoId or authorName. Video data:`, video);
             continue;
           }
 
-          // Additional check: Ensure video is from last 24 hours (backup filter)
-          const videoUploadTime = video.create_time || video.upload_time || video.create_timestamp;
-          if (videoUploadTime) {
-            const videoDate = new Date(videoUploadTime * 1000); // Convert timestamp to Date (assuming seconds)
-            const now = new Date();
-            const twentyFourHoursAgo = new Date(now.getTime() - (24 * 60 * 60 * 1000));
-            
-            if (videoDate < twentyFourHoursAgo) {
-              console.log(`Skipping video ${video.video_id} - uploaded ${videoDate.toISOString()}, which is older than 24 hours`);
-              continue;
-            }
-            console.log(`Video ${video.video_id} is recent - uploaded ${videoDate.toISOString()}`);
-          } else {
-            console.warn(`No upload time found for video ${video.video_id}, proceeding anyway`);
-          }
-
           try {
-            const videoUrl = `https://www.tiktok.com/@${video.author.unique_id}/video/${video.video_id}`;
+            const videoUrl = video.videoUrl || `https://www.tiktok.com/@${video.authorName}/video/${video.videoId}`;
             console.log(`Processing video URL: ${videoUrl}`);
 
-            // Get download URL directly from the search result
-            const videoDownloadUrl = video.play || video.wmplay; // Prefer non-watermarked
-
-            if (!videoDownloadUrl) {
-              console.warn(`No video download URL (play or wmplay) found for: ${videoUrl}. Video data:`, video);
-              continue;
-            }
-
-            console.log(`Downloading video from: ${videoDownloadUrl}`);
-            let supabaseUrl = null;
-            let videoIdForSupabase = `video-${Date.now()}-${Math.floor(Math.random() * 10000)}`;
-            const fileName = trendQueryId
-              ? `tq-${trendQueryId}-${videoIdForSupabase}.mp4`
-              : `${videoIdForSupabase}.mp4`;
-
-            try {
-              const videoBufferResponse = await axios({
-                method: 'GET',
-                url: videoDownloadUrl,
-                responseType: 'arraybuffer'
-              });
-
-              console.log(`Uploading video to Supabase with filename: ${fileName}`);
-              supabaseUrl = await uploadVideoToSupabase(videoBufferResponse.data, fileName);
-
-              if (!supabaseUrl) {
-                console.warn(`Failed to upload video to Supabase: ${videoUrl}`);
-                continue;
-              }
-              console.log(`Successfully uploaded video to Supabase: ${supabaseUrl}`);
-            } catch (downloadOrUploadError) {
-              console.error(`Error downloading from ${videoDownloadUrl} or uploading ${fileName}: ${downloadOrUploadError.message}`);
-              continue;
-            }
+            // Note: New API doesn't provide direct download URLs, so we'll store the TikTok URL
+            // and skip the video downloading/uploading part for now
+            let supabaseUrl = videoUrl; // Use the TikTok URL directly
 
             const processedVideo = {
-              // id: videoIdForSupabase, // This is an internal ID for the allVideos array, not for DB
-              author: video.author?.unique_id || 'Unknown Author',
-              title: video.title || query,
-              description: video.title || query, // Used for caption and hashtags extraction
-              likes: video.digg_count || 0,
-              comments: video.comment_count || 0, // Not in DB schema shown, but good to have
-              shares: video.share_count || 0,
-              views: video.play_count || 0,
+              author: video.authorName || video.user || 'Unknown Author',
+              title: video.videoTitle || query,
+              description: video.videoTitle || query, // Used for caption and hashtags extraction
+              likes: video.likes || 0,
+              comments: video.commentsCount || 0,
+              shares: video.shares || 0,
+              views: video.playCount || 0,
               originalUrl: videoUrl, // This will be mapped to video_url in supabaseService
-              supabaseUrl: supabaseUrl, // This will be mapped to download_url in supabaseService
-              coverUrl: video.cover || video.origin_cover || video.ai_dynamic_cover || '', // Mapped to thumbnail_url
+              supabaseUrl: supabaseUrl, // This will be mapped to videoUrl in supabaseService
+              coverUrl: '', // New API doesn't provide cover URLs directly
               searchQuery: query, // Used for context, not directly saved unless part of title/caption
-              duration: video.duration || 0,
-              musicTitle: video.music_info?.title || 'N/A',
-              downloadCount: video.download_count || 0, // From API, will be mapped to 'downloads' in DB
-              uploadedAt: video.create_time || video.upload_time || video.create_timestamp || null // Capture upload date from API
+              duration: video.videoDuration || 0,
+              musicTitle: video.musicTitle || 'N/A',
+              downloadCount: 0, // New API doesn't provide download count
+              uploadedAt: video.videoCreateTime || null // Capture upload date from API
             };
 
             try {

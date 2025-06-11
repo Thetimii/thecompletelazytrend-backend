@@ -112,6 +112,21 @@ export const scrapeTikTokVideos = async (searchQueries, videosPerQuery = 5, user
             const videoUrl = video.videoUrl || `https://www.tiktok.com/@${video.authorName}/video/${video.videoId}`;
             console.log(`Processing video URL: ${videoUrl}`);
 
+            // Generate thumbnail URL - use a more reliable approach
+            let thumbnailUrl = null;
+            
+            if (video.videoId) {
+              // Use TikTok's oembed service to get thumbnail (most reliable)
+              thumbnailUrl = `https://www.tiktok.com/oembed?url=${encodeURIComponent(videoUrl)}`;
+            }
+            
+            // Fallback to a TikTok placeholder image if no thumbnail available
+            if (!thumbnailUrl) {
+              thumbnailUrl = 'https://lf16-tiktok-web.ttwstatic.com/obj/tiktok-web/tiktok/webapp/main/webapp-mobile/8152caf0c8e8bc67ae23.png';
+            }
+
+            console.log(`Generated thumbnail URL: ${thumbnailUrl}`);
+
             // Note: New API doesn't provide direct download URLs, so we'll store the TikTok URL
             // and skip the video downloading/uploading part for now
             let supabaseUrl = videoUrl; // Use the TikTok URL directly
@@ -126,7 +141,7 @@ export const scrapeTikTokVideos = async (searchQueries, videosPerQuery = 5, user
               views: video.playCount || 0,
               originalUrl: videoUrl, // This will be mapped to video_url in supabaseService
               supabaseUrl: supabaseUrl, // This will be mapped to videoUrl in supabaseService
-              coverUrl: '', // New API doesn't provide cover URLs directly
+              coverUrl: thumbnailUrl, // Generated thumbnail URL
               searchQuery: query, // Used for context, not directly saved unless part of title/caption
               duration: video.videoDuration || 0,
               musicTitle: video.musicTitle || 'N/A',

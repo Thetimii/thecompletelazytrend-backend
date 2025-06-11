@@ -100,7 +100,9 @@ export const saveTikTokVideo = async (videoData, trendQueryId) => {
       music_title: videoData.music_title,
       thumbnail_url: videoData.thumbnail_url || videoData.coverUrl,
       // Supabase storage URL for the video file itself
-      videoUrl: videoData.videoUrl // This should be the supabaseUrl passed in videoData, now mapped to 'videoUrl'
+      videoUrl: videoData.videoUrl, // This should be the supabaseUrl passed in videoData, now mapped to 'videoUrl'
+      // Upload date from TikTok API
+      UPLOADED_AT: videoData.uploaded_at || null
     };
 
     // Ensure trend_query_id is handled correctly

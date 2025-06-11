@@ -46,15 +46,15 @@ export const scrapeTikTokVideos = async (searchQueries, videosPerQuery = 5, user
 
       try {
         // Search for TikTok videos using the Feed Search API
-        console.log(`Searching TikTok for: "${query}" with count: ${videosPerQuery}`);
+        console.log(`Searching TikTok for: "${query}" with count: ${videosPerQuery} (last 24 hours only)`);
         const searchResponse = await axios.get(TIKTOK_SEARCH_API_URL, {
           params: {
             keywords: query,
             count: videosPerQuery.toString(), // Request exactly the number of videos we want to process
             cursor: '0',
             region: 'US',
-            publish_time: '0',
-            sort_type: '0' // 0 for relevance, 1 for latest
+            publish_time: '1', // 1 = Last 24 hours, 0 = All time, 7 = Last 7 days, 30 = Last 30 days
+            sort_type: '1' // 0 for relevance, 1 for latest (better for getting recent videos)
           },
           headers: {
             'X-RapidAPI-Key': RAPIDAPI_KEY,
@@ -76,11 +76,11 @@ export const scrapeTikTokVideos = async (searchQueries, videosPerQuery = 5, user
         }
 
         const videosFromApi = searchResponse.data.data.videos;
-        console.log(`Found ${videosFromApi.length} videos from API for query: "${query}" (requested ${videosPerQuery})`);
+        console.log(`Found ${videosFromApi.length} videos from API for query: "${query}" (last 24 hours, requested ${videosPerQuery})`);
 
         // Process up to videosPerQuery videos from search results
         const videosToProcess = videosFromApi.slice(0, videosPerQuery);
-        console.log(`Attempting to process ${videosToProcess.length} videos for query: "${query}"`);
+        console.log(`Attempting to process ${videosToProcess.length} recent videos for query: "${query}"`);
 
         for (let i = 0; i < videosToProcess.length; i++) {
           const video = videosToProcess[i];
@@ -91,6 +91,22 @@ export const scrapeTikTokVideos = async (searchQueries, videosPerQuery = 5, user
           if (!video || !video.video_id || !video.author?.unique_id) {
             console.warn(`Invalid video data at index ${i} for query "${query}". Missing video_id or author.unique_id. Video data:`, video);
             continue;
+          }
+
+          // Additional check: Ensure video is from last 24 hours (backup filter)
+          const videoUploadTime = video.create_time || video.upload_time || video.create_timestamp;
+          if (videoUploadTime) {
+            const videoDate = new Date(videoUploadTime * 1000); // Convert timestamp to Date (assuming seconds)
+            const now = new Date();
+            const twentyFourHoursAgo = new Date(now.getTime() - (24 * 60 * 60 * 1000));
+            
+            if (videoDate < twentyFourHoursAgo) {
+              console.log(`Skipping video ${video.video_id} - uploaded ${videoDate.toISOString()}, which is older than 24 hours`);
+              continue;
+            }
+            console.log(`Video ${video.video_id} is recent - uploaded ${videoDate.toISOString()}`);
+          } else {
+            console.warn(`No upload time found for video ${video.video_id}, proceeding anyway`);
           }
 
           try {
@@ -147,7 +163,8 @@ export const scrapeTikTokVideos = async (searchQueries, videosPerQuery = 5, user
               searchQuery: query, // Used for context, not directly saved unless part of title/caption
               duration: video.duration || 0,
               musicTitle: video.music_info?.title || 'N/A',
-              downloadCount: video.download_count || 0 // From API, will be mapped to 'downloads' in DB
+              downloadCount: video.download_count || 0, // From API, will be mapped to 'downloads' in DB
+              uploadedAt: video.create_time || video.upload_time || video.create_timestamp || null // Capture upload date from API
             };
 
             try {
@@ -166,6 +183,7 @@ export const scrapeTikTokVideos = async (searchQueries, videosPerQuery = 5, user
                 duration: processedVideo.duration,
                 music_title: processedVideo.musicTitle,
                 downloads: processedVideo.downloadCount, // Mapping API's download_count to DB's downloads
+                uploaded_at: processedVideo.uploadedAt, // Add the upload date from TikTok API
                 // trend_query_id is handled by saveTikTokVideo based on the passed trendQueryId or userId
               };
               

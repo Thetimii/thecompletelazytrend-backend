@@ -69,6 +69,8 @@ export const scrapeTikTokVideos = async (searchQueries, videosPerQuery = 5, user
           searchParams.videosLocation = videosLocation;
         }
 
+        console.log(`Search parameters for "${query}":`, searchParams);
+
         const searchResponse = await axios.get(TIKTOK_TRENDING_API_URL, {
           params: searchParams,
           headers: {
@@ -77,11 +79,15 @@ export const scrapeTikTokVideos = async (searchQueries, videosPerQuery = 5, user
           }
         });
 
-        // console.log('Search API response for query "${query}":', JSON.stringify(searchResponse.data, null, 2));
+        console.log(`Search API response for query "${query}":`, JSON.stringify(searchResponse.data, null, 2));
 
         // Parse the new API response structure
         if (!searchResponse.data || !searchResponse.data.data || !searchResponse.data.data.stats || !Array.isArray(searchResponse.data.data.stats)) {
-          console.warn(`No search results or error for query: "${query}". API Response:`, searchResponse.data);
+          console.warn(`No search results or error for query: "${query}". API Response structure invalid`);
+          console.warn(`Response data keys:`, searchResponse.data ? Object.keys(searchResponse.data) : 'No data');
+          if (searchResponse.data && searchResponse.data.data) {
+            console.warn(`Response data.data keys:`, Object.keys(searchResponse.data.data));
+          }
           continue;
         }
 

@@ -15,25 +15,40 @@ const DASHSCOPE_API_KEY = process.env.DASHSCOPE_API_KEY;
  */
 const updateVideoAnalysis = async (videoId, analysisData) => {
   try {
-    const { data, error } = await supabase
+    const updatePayload = {
+      summary: analysisData.summary,
+      hooks: analysisData.hooks,
+      ctas: analysisData.ctas,
+      content_style: analysisData.content_style,
+      success_factors: analysisData.success_factors,
+      transcript: analysisData.transcript,
+      last_analyzed_at: new Date().toISOString(),
+      // We are not updating frame_analysis for now
+    };
+
+    console.log(`Updating video ${videoId} with payload:`, JSON.stringify(updatePayload, null, 2));
+
+    const { data, error } = await supabaseService.supabase
       .from('tiktok_videos')
-      .update({
-        summary: analysisData.summary,
-        transcript: analysisData.transcript || '',
-        frame_analysis: analysisData.frameAnalysis || {},
-        last_analyzed_at: new Date().toISOString()
-      })
+      .update(updatePayload)
       .eq('id', videoId)
       .select();
 
     if (error) {
+      console.error(`Supabase error for video ${videoId}:`, error);
       throw new Error(`Error updating video analysis: ${error.message}`);
     }
 
+    if (!data || data.length === 0) {
+      throw new Error(`No data returned after updating video ${videoId}. It might not exist.`);
+    }
+
+    console.log(`Successfully updated video ${videoId} in Supabase.`);
     return data[0];
   } catch (error) {
-    console.error('Error updating video analysis:', error);
-    throw new Error('Failed to update video analysis');
+    console.error(`Error in updateVideoAnalysis for video ${videoId}:`, error);
+    // Re-throw the error to be caught by the calling function
+    throw new Error(`Failed to update video analysis for ${videoId}`);
   }
 };
 
@@ -45,21 +60,37 @@ const updateVideoAnalysis = async (videoId, analysisData) => {
 const analyzeVideo = async (video) => {
   try {
     console.log(`Analyzing video: ${video.id}`);
-
-    // Get the video URL from the storage bucket
     const videoUrl = video.storageUrl;
-
     console.log(`Using video URL: ${videoUrl}`);
 
-    // Prepare the request to DashScope API
+    const prompt = `
+Analyze this TikTok video and provide a detailed marketing analysis. The video has ${video.likes || 0} likes, ${video.comments || 0} comments, and ${video.views || 0} views. The caption is: "${video.caption || ''}".
+
+Your response MUST be a valid JSON object with the following structure:
+{
+  "summary": "A concise, one-paragraph summary of the video's content and marketing angle.",
+  "hooks": [
+    "A list of specific hooks used in the first 3 seconds to grab attention. E.g., 'Uses a controversial statement', 'Starts with a surprising visual'."
+  ],
+  "ctas": [
+    "A list of calls-to-action in the video. E.g., 'Asks users to comment', 'Points to a link in bio'."
+  ],
+  "content_style": "Describe the content style. E.g., 'Fast-paced editing with trending audio', 'User-generated content style', 'Educational tutorial'.",
+  "success_factors": [
+    "A list of key reasons why this video is successful. E.g., 'Relatable humor', 'Addresses a common pain point', 'High production quality'."
+  ],
+  "transcript": "A full transcript of the spoken words in the video. If no speech, return an empty string."
+}
+`;
+
     const requestBody = {
-      model: 'qwen2.5-vl-72b-instruct', // Using the model that works with video
+      model: 'qwen2.5-vl-72b-instruct',
       input: {
         messages: [
           {
             role: "system",
             content: [{
-              text: "You are an expert at analyzing TikTok marketing strategies. Your task is to analyze the provided video and extract key marketing elements that make it successful."
+              text: "You are an expert at analyzing TikTok marketing strategies. Your task is to analyze the provided video and extract key marketing elements that make it successful. You must return your analysis in a valid JSON format."
             }]
           },
           {
@@ -67,12 +98,12 @@ const analyzeVideo = async (video) => {
             content: [
               {
                 video: videoUrl,
-                fps: 1, // Lower fps to reduce data size
+                fps: 1,
                 start_time: 0,
-                end_time: 60 // Limit to first 60 seconds
+                end_time: 60
               },
               {
-                text: `Analyze this TikTok video. Extract the key marketing elements, content style, hooks used, and why it might be successful. The video has ${video.likes || 0} likes, ${video.comments || 0} comments, and ${video.views || 0} views. The caption is: "${video.caption || ''}"`
+                text: prompt
               }
             ]
           }
@@ -84,8 +115,6 @@ const analyzeVideo = async (video) => {
     };
 
     console.log(`Making API call to DashScope for video: ${video.id}`);
-
-    // Set base URL for international API
     axios.defaults.baseURL = 'https://dashscope-intl.aliyuncs.com/api/v1';
 
     const response = await axios.post(
@@ -95,25 +124,38 @@ const analyzeVideo = async (video) => {
         headers: {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${DASHSCOPE_API_KEY}`,
-          'X-DashScope-DataInspection': 'enable' // Enable data inspection for debugging
+          'X-DashScope-DataInspection': 'enable'
         },
-        timeout: 300000 // 5 minutes timeout for longer processing
+        timeout: 300000
       }
     );
 
     console.log(`Response received for video: ${video.id}`);
+    const rawContent = response.data.output.choices[0].message.content[0].text;
 
-    // Extract the analysis from the response
-    const analysis = response.data.output.choices[0].message.content[0].text;
+    // Clean the response to extract only the JSON part
+    const jsonMatch = rawContent.match(/\{.*\}/s);
+    if (!jsonMatch) {
+      console.error(`Failed to find valid JSON in response for video ${video.id}. Raw content:`, rawContent);
+      throw new Error(`Malformed AI response: No JSON object found for video ${video.id}.`);
+    }
 
-    return {
-      summary: analysis,
-      transcript: '',
-      frameAnalysis: {}
-    };
+    try {
+      const analysisData = JSON.parse(jsonMatch[0]);
+      console.log(`Successfully parsed JSON for video ${video.id}`);
+      return analysisData;
+    } catch (parseError) {
+      console.error(`Failed to parse JSON for video ${video.id}. Raw JSON string:`, jsonMatch[0]);
+      throw new Error(`Malformed AI response: Invalid JSON format for video ${video.id}.`);
+    }
+
   } catch (error) {
-    console.error(`Error analyzing video ${video.id}:`, error);
-    throw error;
+    console.error(`Error in analyzeVideo for video ${video.id}:`, error.message);
+    // Add more context to the error and re-throw
+    if (error.response) {
+      console.error('DashScope API Error Body:', error.response.data);
+    }
+    throw new Error(`Failed to analyze video ${video.id}. Reason: ${error.message}`);
   }
 };
 

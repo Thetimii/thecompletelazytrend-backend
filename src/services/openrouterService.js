@@ -302,40 +302,65 @@ export const summarizeTrends = async (videoAnalyses, businessDescription, userId
   try {
     console.log(`Summarizing trends for ${videoAnalyses.length} videos...`);
 
-    // Create a leaner version of videoAnalyses to reduce memory footprint
-    const leanVideoAnalyses = videoAnalyses.map(video => {
-      // Transferring search query, URL/ID, title, and description (as "what happened")
-      return {
-        searchQuery: video.searchQuery,
-        url: video.url || video.id || video.dbId,
-        title: video.title,
-        description: video.description 
-      };
-    });
+    // The videoAnalyses are now expected to be rich objects with structured data.
+    // We can pass them directly to the AI for a more detailed summary.
+    const leanVideoAnalyses = videoAnalyses.map(v => ({
+      summary: v.summary,
+      hooks: v.hooks,
+      ctas: v.ctas,
+      content_style: v.content_style,
+      success_factors: v.success_factors,
+      views: v.views,
+      likes: v.likes,
+      comments: v.comments,
+    }));
+
+    const prompt = `
+I have analyzed ${leanVideoAnalyses.length} TikTok videos for a business that is a "${businessDescription}".
+Here is the detailed analysis data for each video:
+${JSON.stringify(leanVideoAnalyses, null, 2)}
+
+Based on this data, provide a comprehensive trend analysis. Your response MUST be a valid JSON object with the following structure:
+{
+  "trend_observations": "A one-paragraph summary of the overarching trends, commonalities, and content styles observed across all the videos.",
+  "actionable_insights": [
+    "A list of specific, actionable insights for the business. For example: 'Use a hook that asks a question in the first 2 seconds.', 'Create tutorials that solve a common customer problem.'"
+  ],
+  "content_ideas": [
+    {
+      "idea_title": "Example Video Idea 1",
+      "description": "A brief description of a new video concept based on the trends.",
+      "hook_suggestion": "Start with this surprising fact...",
+      "cta_suggestion": "Ask your audience to share their experiences in the comments."
+    },
+    {
+      "idea_title": "Example Video Idea 2",
+      "description": "Another new video concept.",
+      "hook_suggestion": "Show a dramatic before-and-after.",
+      "cta_suggestion": "Direct users to the link in your bio for a free guide."
+    }
+  ],
+  "hashtag_strategy": [
+    "#relevanthashtag1", "#trendinghashtag2", "#nichehashtag3"
+  ]
+}
+`;
 
     const response = await axios.post(
       OPENROUTER_API_URL,
       {
-        model: 'google/gemma-3-1b-it:free',
+        model: 'openai/gpt-4o', // Using a more powerful model for structured JSON generation
         messages: [
           {
+            role: "system",
+            content: "You are a TikTok marketing expert. Your job is to analyze video data and provide actionable marketing strategies in a structured JSON format."
+          },
+          {
             role: 'user',
-            content: [
-              {
-                type: "text",
-                text: `I have analyzed ${leanVideoAnalyses.length} TikTok videos for a ${businessDescription} business. Here is the summarized analysis data: ${JSON.stringify(leanVideoAnalyses)}.
-
-                Based on this data, provide:
-                1. A clear summary of what's trending in these videos (common themes, styles, hooks)
-                2. Step-by-step instructions on how to recreate this trend for the ${businessDescription} business
-                3. Key elements that make these videos successful
-                4. Suggested hashtags to use
-
-                Format your response as simple text with clear section headings, not as JSON.`
-              }
-            ]
+            content: prompt
           }
-        ]
+        ],
+        response_format: { type: "json_object" } // Enforce JSON output
       },
       {
         headers: {
@@ -347,100 +372,43 @@ export const summarizeTrends = async (videoAnalyses, businessDescription, userId
       }
     );
 
-    // Extract the generated summary from the response
     const content = response.data.choices[0].message.content;
+    console.log("Raw response from OpenRouter:", content);
 
-    // Create a structured object from the text content
-    const summary = {
-      trendSummary: content,
-      recreationSteps: [],
-      keyElements: [],
-      suggestedHashtags: [],
-      rawContent: content // Store the raw content as well
-    };
+    try {
+      const trendSummary = JSON.parse(content);
+      console.log("Successfully parsed trend summary JSON.");
 
-    // Try to extract sections from the text
-    const trendSummaryMatch = content.match(/Trend Summary:?([\s\S]*?)(?:Step-by-step instructions|Recreation Steps|$)/i);
-    if (trendSummaryMatch && trendSummaryMatch[1]) {
-      summary.trendSummary = trendSummaryMatch[1].trim();
-    }
-
-    const recreationStepsMatch = content.match(/(?:Step-by-step instructions|Recreation Steps):?([\s\S]*?)(?:Key elements|$)/i);
-    if (recreationStepsMatch && recreationStepsMatch[1]) {
-      summary.recreationSteps = recreationStepsMatch[1]
-        .split(/\n/)
-        .map(line => line.replace(/^[-*•\d.]\s*/, '').trim())
-        .filter(line => line.length > 0);
-    }
-
-    const keyElementsMatch = content.match(/Key elements:?([\s\S]*?)(?:Suggested hashtags|$)/i);
-    if (keyElementsMatch && keyElementsMatch[1]) {
-      summary.keyElements = keyElementsMatch[1]
-        .split(/\n/)
-        .map(line => line.replace(/^[-*•]\s*/, '').trim())
-        .filter(line => line.length > 0);
-    }
-
-    const hashtagsMatch = content.match(/Suggested hashtags:?([\s\S]*?)$/i);
-    if (hashtagsMatch && hashtagsMatch[1]) {
-      summary.suggestedHashtags = hashtagsMatch[1]
-        .split(/[,\n]/)
-        .map(tag => tag.trim().replace(/^[^#]/, '#$&').trim())
-        .filter(tag => tag.length > 1);
-    }
-
-    // Save recommendation to database if userId is provided
-    if (userId) {
-      try {
-        // Extract video IDs from analyzed videos
-        const videoIds = videoAnalyses
-          .filter(video => video.id || video.dbId)
-          .map(video => video.id || video.dbId);
-
-        // Create recommendation data
-        const recommendationData = {
-          userId: userId,
-          combinedSummary: JSON.stringify(summary),
-          contentIdeas: JSON.stringify(summary.recreationSteps || []),
-          videoIds: videoIds
-        };
-
-        // Save the recommendation
+      if (userId) {
         try {
+          const videoIds = videoAnalyses.map(v => v.id).filter(id => id);
+          const recommendationData = {
+            userId: userId,
+            combinedSummary: JSON.stringify(trendSummary), // Storing the full JSON object
+            contentIdeas: JSON.stringify(trendSummary.content_ideas || []),
+            videoIds: videoIds
+          };
+
           const savedRecommendation = await saveRecommendation(recommendationData);
           console.log(`Saved trend summary to database: ${savedRecommendation.id}`);
-          summary.recommendationId = savedRecommendation.id;
-
-          // Also update each video's summary field
-          for (const video of videoAnalyses) {
-            const videoId = video.id || video.dbId;
-            if (videoId) {
-              try {
-                // Update the video's summary field with the full text summary
-                await updateTikTokVideoAnalysis(videoId, {
-                  summary: summary.trendSummary || summary.rawContent,
-                  transcript: video.transcript || "",
-                  frameAnalysis: video.frameAnalysis || ""
-                });
-                console.log(`Updated TikTok video with analysis: ${videoId}`);
-              } catch (videoError) {
-                console.error(`Error updating video analysis: ${videoError.message}`);
-              }
-            }
-          }
-        } catch (saveError) {
-          console.error(`Error saving trend summary to database: ${saveError.message}`);
-          // Continue even if database save fails
+          trendSummary.recommendationId = savedRecommendation.id;
+        } catch (dbError) {
+          console.error(`Error saving trend summary to database: ${dbError.message}`);
         }
-      } catch (dbError) {
-        console.error(`Error saving trend summary to database: ${dbError.message}`);
-        // Continue even if database save fails
       }
+
+      return trendSummary;
+
+    } catch (parseError) {
+      console.error('Error parsing JSON response from OpenRouter:', parseError);
+      throw new Error('Failed to parse trend summary from AI response.');
     }
 
-    return summary;
   } catch (error) {
     console.error('Error summarizing trends:', error);
+    if (error.response) {
+      console.error('OpenRouter Error Body:', error.response.data);
+    }
     throw new Error('Failed to summarize trends');
   }
 };
